@@ -1,0 +1,1909 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PostureAI | Intelligent Posture Trainer</title>
+    <!-- TensorFlow.js (for custom classifier only) -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.17.0/dist/tf.min.js"></script>
+    <!-- MediaPipe loaded on demand via dynamic import() in initPoseDetection -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-color: #0f172a;
+            --panel-bg: #1e293b;
+            --accent-color: #38bdf8;
+            --accent-glow: rgba(56, 189, 248, 0.4);
+            --text-main: #f8fafc;
+            --text-dim: #94a3b8;
+            --success: #22c55e;
+            --danger: #ef4444;
+            --warning: #f59e0b;
+            --radius: 12px;
+            --transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Outfit', sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            height: 100vh;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        header {
+            padding: 1rem 2rem;
+            background: rgba(15, 23, 42, 0.8);
+            backdrop-filter: blur(8px);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            z-index: 10;
+        }
+
+        .logo {
+            font-size: 1.5rem;
+            font-weight: 600;
+            letter-spacing: -0.025em;
+            background: linear-gradient(to right, #38bdf8, #818cf8);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        main {
+            display: flex;
+            flex: 1;
+            padding: 1.5rem;
+            gap: 1.5rem;
+            height: calc(100vh - 64px);
+        }
+
+        /* Left Panel - Camera */
+        .viewport-container {
+            flex: 1.2;
+            background: var(--panel-bg);
+            border-radius: var(--radius);
+            position: relative;
+            overflow: hidden;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        #output {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            transform: scaleX(-1);
+            /* Mirror camera */
+        }
+
+        .prediction-overlay {
+            position: absolute;
+            top: 2rem;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(15, 23, 42, 0.7);
+            backdrop-filter: blur(12px);
+            padding: 0.75rem 2rem;
+            border-radius: 999px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            font-size: 1.25rem;
+            font-weight: 600;
+            text-align: center;
+            opacity: 0;
+            transition: var(--transition);
+        }
+
+        .prediction-overlay.active {
+            opacity: 1;
+        }
+
+        /* Right Panel - Controls */
+        .controls-container {
+            flex: 0.8;
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+            overflow-y: auto;
+            padding-right: 0.5rem;
+        }
+
+        .card {
+            background: var(--panel-bg);
+            border-radius: var(--radius);
+            padding: 1.5rem;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .card-title {
+            font-size: 1.1rem;
+            font-weight: 600;
+            margin-bottom: 1.25rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            color: var(--accent-color);
+        }
+
+        /* Tabs */
+        .tabs {
+            display: flex;
+            gap: 0.5rem;
+            margin-bottom: 1.5rem;
+            background: rgba(15, 23, 42, 0.4);
+            padding: 0.25rem;
+            border-radius: 8px;
+        }
+
+        .tab-btn {
+            flex: 1;
+            padding: 0.5rem;
+            border: none;
+            background: transparent;
+            color: var(--text-dim);
+            font-family: inherit;
+            font-weight: 500;
+            cursor: pointer;
+            border-radius: 6px;
+            transition: var(--transition);
+        }
+
+        .tab-btn.active {
+            background: var(--panel-bg);
+            color: var(--text-main);
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        /* UI Elements */
+        .input-group {
+            margin-bottom: 1rem;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-size: 0.875rem;
+            color: var(--text-dim);
+        }
+
+        input[type="text"],
+        input[type="number"],
+        select {
+            width: 100%;
+            padding: 0.75rem;
+            background: rgba(15, 23, 42, 0.5);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            color: var(--text-main);
+            font-family: inherit;
+            outline: none;
+            transition: var(--transition);
+        }
+
+        input:focus {
+            border-color: var(--accent-color);
+            box-shadow: 0 0 0 2px var(--accent-glow);
+        }
+
+        .btn {
+            width: 100%;
+            padding: 0.75rem;
+            border: none;
+            border-radius: 8px;
+            font-family: inherit;
+            font-weight: 600;
+            cursor: pointer;
+            transition: var(--transition);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+        }
+
+        .btn-primary {
+            background: var(--accent-color);
+            color: var(--bg-color);
+        }
+
+        .btn-primary:hover {
+            opacity: 0.9;
+            transform: translateY(-1px);
+        }
+
+        .btn-secondary {
+            background: rgba(255, 255, 255, 0.05);
+            color: var(--text-main);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .btn-secondary:hover {
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .label-list {
+            margin-bottom: 1rem;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+        }
+
+        .capture-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 0.75rem;
+            margin-bottom: 1rem;
+        }
+
+        .capture-label-btn {
+            background: rgba(30, 41, 59, 0.4);
+            backdrop-filter: blur(8px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 1.25rem 0.5rem;
+            height: auto;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            cursor: pointer;
+            border-radius: 12px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .capture-label-btn::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: linear-gradient(135deg, rgba(255, 255, 255, 0.05), transparent);
+            pointer-events: none;
+        }
+
+        .capture-label-btn:hover {
+            background: rgba(56, 189, 248, 0.15);
+            border-color: var(--accent-color);
+            transform: translateY(-4px);
+            box-shadow: 0 10px 20px -5px rgba(0, 0, 0, 0.3), 0 0 15px var(--accent-glow);
+        }
+
+        .capture-label-btn.btn-good:hover {
+            background: rgba(34, 197, 94, 0.15);
+            border-color: var(--success);
+            box-shadow: 0 10px 20px -5px rgba(0, 0, 0, 0.3), 0 0 15px rgba(34, 197, 94, 0.3);
+        }
+
+        .capture-label-btn.btn-bad:hover {
+            background: rgba(239, 68, 68, 0.15);
+            border-color: var(--danger);
+            box-shadow: 0 10px 20px -5px rgba(0, 0, 0, 0.3), 0 0 15px rgba(239, 68, 68, 0.3);
+        }
+
+        .capture-label-btn .btn-label-text {
+            font-size: 0.7rem;
+            color: var(--text-dim);
+            font-weight: 600;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+        }
+
+        .capture-label-btn .btn-count {
+            font-size: 1.75rem;
+            font-weight: 700;
+            color: var(--text-main);
+            margin-top: 0.25rem;
+            text-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+        }
+
+        .remove-btn {
+            background: rgba(239, 68, 68, 0.1);
+            border: 1px solid rgba(239, 68, 68, 0.2);
+            color: var(--danger);
+            cursor: pointer;
+            width: 20px;
+            height: 20px;
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.8rem;
+            transition: all 0.2s;
+            opacity: 0.6;
+        }
+
+        .remove-btn:hover {
+            opacity: 1;
+            background: var(--danger);
+            color: white;
+            transform: scale(1.1);
+        }
+
+        .label-tag {
+            background: rgba(15, 23, 42, 0.4);
+            padding: 0.6rem 0.8rem;
+            border-radius: 8px;
+            font-size: 0.85rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            margin-bottom: 0.5rem;
+            width: 100%;
+            color: var(--text-main);
+            font-weight: 500;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1rem;
+            margin-top: 1rem;
+        }
+
+        .stat-card {
+            background: rgba(15, 23, 42, 0.3);
+            padding: 1rem;
+            border-radius: 8px;
+            text-align: center;
+        }
+
+        .stat-val {
+            display: block;
+            font-size: 1.5rem;
+            font-weight: 600;
+            color: var(--accent-color);
+        }
+
+        /* Ultimate Analytics Suite CSS */
+        .score-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 1.5rem;
+            background: linear-gradient(135deg, rgba(56, 189, 248, 0.1), rgba(56, 189, 248, 0.05));
+            border-radius: 16px;
+            border: 1px solid rgba(56, 189, 248, 0.2);
+            margin-bottom: 1.5rem;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .score-val {
+            font-size: 4rem;
+            font-weight: 800;
+            line-height: 1;
+            background: linear-gradient(to bottom, #fff, var(--accent-color));
+            background-clip: text;
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 0.5rem;
+        }
+
+        .score-label {
+            font-size: 0.875rem;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--text-dim);
+        }
+
+        .analytics-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1rem;
+            margin-bottom: 1rem;
+        }
+
+        .viz-card {
+            background: rgba(15, 23, 42, 0.4);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            border-radius: 12px;
+            padding: 1rem;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .viz-title {
+            font-size: 0.75rem;
+            color: var(--text-dim);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-bottom: 0.75rem;
+            width: 100%;
+            text-align: center;
+        }
+
+        .viz-container {
+            position: relative;
+            width: 100%;
+            height: 160px;
+        }
+
+        /* ---- 24×60 day heatmap ---- */
+        .day-heatmap {
+            width: 100%;
+        }
+
+        .day-heatmap-min-labels {
+            display: flex;
+            margin-left: 22px;
+            /* align with row cells */
+            margin-bottom: 3px;
+        }
+
+        .day-heatmap-min-label {
+            font-size: 0.5rem;
+            color: var(--text-dim);
+            flex: 1;
+            text-align: left;
+        }
+
+        .day-row {
+            display: flex;
+            align-items: center;
+            gap: 2px;
+            margin-bottom: 1px;
+        }
+
+        .day-row-label {
+            width: 20px;
+            font-size: 0.52rem;
+            color: var(--text-dim);
+            text-align: right;
+            flex-shrink: 0;
+            line-height: 1;
+        }
+
+        .day-row-cells {
+            display: grid;
+            grid-template-columns: repeat(60, 1fr);
+            gap: 1px;
+            flex: 1;
+        }
+
+        .day-min-cell {
+            height: 7px;
+            border-radius: 1px;
+            background: rgba(255, 255, 255, 0.05);
+            transition: opacity 0.1s;
+        }
+
+        .day-min-cell:hover {
+            outline: 1px solid rgba(255, 255, 255, 0.5);
+            z-index: 2;
+        }
+
+        .day-min-cell.current-min {
+            outline: 1px solid rgba(255, 255, 255, 0.8);
+        }
+
+        .rings-svg {
+            transform: rotate(-90deg);
+        }
+
+        .ring-circle {
+            fill: none;
+            stroke-width: 8;
+            stroke-linecap: round;
+            transition: stroke-dasharray 0.5s ease;
+        }
+
+        .stat-label {
+            font-size: 0.75rem;
+            color: var(--text-dim);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .progress-bar-container {
+            width: 100%;
+            height: 8px;
+            background: rgba(15, 23, 42, 0.5);
+            border-radius: 4px;
+            margin-top: 1rem;
+            overflow: hidden;
+        }
+
+        .progress-bar {
+            height: 100%;
+            background: var(--accent-color);
+            width: 0%;
+            transition: var(--transition);
+        }
+
+        /* Status colors */
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 0.5rem;
+        }
+
+        .status-ready {
+            background: var(--success);
+        }
+
+        .status-error {
+            background: var(--danger);
+        }
+
+        .status-loading {
+            background: var(--warning);
+            animation: pulse 1s infinite alternate;
+        }
+
+        @keyframes pulse {
+            from {
+                opacity: 0.5;
+            }
+
+            to {
+                opacity: 1;
+            }
+        }
+
+        /* Scrollbar */
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: rgba(255, 255, 255, 0.2);
+        }
+    </style>
+</head>
+
+<body>
+    <header>
+        <div class="logo">PostureAI</div>
+        <div id="status-container">
+            <span class="status-dot status-loading"></span>
+            <span id="status-text" style="font-size: 0.875rem; color: var(--text-dim);">Click Start to begin</span>
+        </div>
+    </header>
+
+    <main>
+        <div class="viewport-container">
+            <video id="video" style="display: none;" playsinline></video>
+            <canvas id="output"></canvas>
+            <div id="prediction" class="prediction-overlay">
+                Waiting for Training...
+            </div>
+            <!-- Start overlay: required for getUserMedia user-gesture in file:// context -->
+            <div id="start-overlay" style="
+                position: absolute; inset: 0;
+                display: flex; flex-direction: column;
+                align-items: center; justify-content: center;
+                background: rgba(15, 23, 42, 0.85);
+                backdrop-filter: blur(4px);
+                z-index: 10;
+                gap: 1rem;
+            ">
+                <div style="font-size: 1.5rem; font-weight: 600;">PostureAI</div>
+                <div style="font-size: 0.875rem; color: var(--text-dim); text-align: center; max-width: 220px;">Click to
+                    start camera and load pose detection</div>
+                <button id="start-btn" style="
+                    padding: 0.75rem 2rem;
+                    background: var(--accent-color);
+                    color: #0f172a;
+                    border: none;
+                    border-radius: 10px;
+                    font-size: 1rem;
+                    font-weight: 600;
+                    cursor: pointer;
+                    font-family: inherit;
+                    box-shadow: 0 0 20px var(--accent-glow);
+                ">&#9654; Start Camera</button>
+            </div>
+        </div>
+
+        <div class="controls-container">
+            <div class="card">
+                <div class="tabs">
+                    <button class="tab-btn active" data-tab="collection">Collection</button>
+                    <button class="tab-btn" data-tab="training">Training</button>
+                    <button class="tab-btn" data-tab="stats">Stats</button>
+                    <button class="tab-btn" data-tab="model">Model</button>
+                    <button class="tab-btn" data-tab="connectivity">Connectivity</button>
+                </div>
+
+                <!-- Collection Tab -->
+                <div id="collection" class="tab-content active">
+                    <div class="card-title">Data Collection</div>
+                    <div class="input-group">
+                        <label>New Label</label>
+                        <div style="display: flex; gap: 0.5rem;">
+                            <input type="text" id="label-input" placeholder="e.g. Good Posture">
+                            <button class="btn btn-secondary" style="width: auto;" id="add-label-btn">Add</button>
+                        </div>
+                    </div>
+                    <div class="label-list" id="label-tags-container">
+                        <!-- Labels will be added here -->
+                    </div>
+                    <div class="capture-grid" id="capture-buttons-container">
+                        <!-- Dynamic capture buttons will appear here -->
+                    </div>
+                    <div style="display: flex; gap: 0.5rem; margin-top: 1rem;">
+                        <button class="btn btn-secondary" id="export-btn">Export JSON</button>
+                        <button class="btn btn-secondary"
+                            onclick="document.getElementById('import-input').click()">Import JSON</button>
+                        <input type="file" id="import-input" style="display: none;" accept=".json">
+                    </div>
+                </div>
+
+                <!-- Training Tab -->
+                <div id="training" class="tab-content">
+                    <div class="card-title">Neural Network</div>
+                    <div class="stats-grid"
+                        style="grid-template-columns: 1fr 1fr 1fr; margin-bottom: 1.5rem; margin-top: 0;">
+                        <div class="stat-card">
+                            <span class="stat-val" style="font-size: 1.2rem;" id="train-loss">-</span>
+                            <span class="stat-label">Loss</span>
+                        </div>
+                        <div class="stat-card">
+                            <span class="stat-val" style="font-size: 1.2rem;" id="train-acc">-</span>
+                            <span class="stat-label">Accuracy</span>
+                        </div>
+                        <div class="stat-card">
+                            <span class="stat-val" style="font-size: 1.2rem;" id="train-epoch">0</span>
+                            <span class="stat-label">Epoch</span>
+                        </div>
+                    </div>
+
+                    <div class="input-group">
+                        <label>Epochs: <span id="epochs-val">50</span></label>
+                        <input type="range" id="epochs-input" min="10" max="200" value="50" style="width: 100%;">
+                    </div>
+                    <div class="input-group">
+                        <label>Learning Rate: <span id="lr-val">0.01</span></label>
+                        <input type="range" id="lr-input" min="0.001" max="0.1" step="0.001" value="0.01"
+                            style="width: 100%;">
+                    </div>
+                    <div class="input-group">
+                        <label>Hidden Neurons: <span id="hidden-val">16</span></label>
+                        <input type="range" id="hidden-input" min="4" max="64" value="16" style="width: 100%;">
+                    </div>
+                    <button class="btn btn-primary" id="train-btn">Start Training</button>
+                    <div class="progress-bar-container">
+                        <div id="train-progress" class="progress-bar"></div>
+                    </div>
+                </div>
+
+                <!-- Model Tab -->
+                <div id="model" class="tab-content">
+                    <div class="card-title">Persistence</div>
+                    <div style="color: var(--text-dim); font-size: 0.875rem; margin-bottom: 1.5rem;">
+                        Save your trained model to LocalStorage or download the weights to your machine.
+                    </div>
+                    <button class="btn btn-secondary" style="margin-bottom: 0.5rem;" id="save-local-btn">Save to
+                        LocalStorage</button>
+                    <button class="btn btn-secondary" style="margin-bottom: 0.5rem;" id="load-local-btn">Load from
+                        LocalStorage</button>
+                    <hr style="border: none; border-top: 1px solid rgba(255, 255, 255, 0.1); margin: 1.5rem 0;">
+                    <button class="btn btn-primary" id="download-model-btn">Download Model Bundles</button>
+
+                    <hr style="border: none; border-top: 1px solid rgba(239, 68, 68, 0.2); margin: 1.5rem 0;">
+                    <div class="card-title" style="color: var(--danger); font-size: 0.9rem;">Reset</div>
+                    <div style="display: flex; flex-direction: column; gap: 0.5rem;">
+                        <button class="btn btn-secondary" id="clear-collection-btn"
+                            style="border-color: rgba(239,68,68,0.3); color: var(--danger);">Clear Collection (training
+                            samples)</button>
+                        <button class="btn btn-secondary" id="clear-model-btn"
+                            style="border-color: rgba(239,68,68,0.3); color: var(--danger);">Clear Saved Model</button>
+                        <button class="btn btn-secondary" id="clear-all-btn"
+                            style="border-color: rgba(239,68,68,0.5); background: rgba(239,68,68,0.1); color: var(--danger);">⚠
+                            Reset Everything</button>
+                    </div>
+                </div>
+
+                <!-- Stats Tab -->
+                <div id="stats" class="tab-content">
+                    <div class="score-container">
+                        <span class="score-val" id="health-score">0</span>
+                        <span class="score-label">Health Score</span>
+                    </div>
+
+                    <div class="analytics-grid" style="grid-template-columns: 1fr;">
+                        <div class="viz-card">
+                            <div class="viz-title">Health Rings</div>
+                            <div class="viz-container">
+                                <svg width="100%" height="160" viewBox="0 0 160 160" class="rings-svg">
+                                    <circle cx="80" cy="80" r="60" class="ring-circle"
+                                        stroke="rgba(255,255,255,0.05)" />
+                                    <circle cx="80" cy="80" r="48" class="ring-circle"
+                                        stroke="rgba(255,255,255,0.05)" />
+                                    <circle cx="80" cy="80" r="36" class="ring-circle"
+                                        stroke="rgba(255,255,255,0.05)" />
+                                    <circle id="ring-upright" cx="80" cy="80" r="60" class="ring-circle"
+                                        stroke="#22c55e" stroke-dasharray="0 377" />
+                                    <circle id="ring-consistency" cx="80" cy="80" r="48" class="ring-circle"
+                                        stroke="#38bdf8" stroke-dasharray="0 301" />
+                                    <circle id="ring-breaks" cx="80" cy="80" r="36" class="ring-circle" stroke="#f59e0b"
+                                        stroke-dasharray="0 226" />
+                                </svg>
+                                <div
+                                    style="position: absolute; bottom: 0; left: 0; width: 100%; display: flex; justify-content: space-around; font-size: 0.6rem; color: var(--text-dim);">
+                                    <span>Goal</span> <span>Streak</span> <span>Break</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="viz-card" style="margin-bottom: 1rem;">
+                        <div class="viz-title">Today's Activity — Minute by Minute</div>
+                        <div id="posture-day-heatmap" class="day-heatmap"></div>
+                    </div>
+
+                    <div class="stats-grid" id="session-stats-grid" style="margin-top: 0.5rem; margin-bottom: 1rem;">
+                        <!-- Dynamic stats will appear here -->
+                    </div>
+
+                    <div style="font-size: 0.7rem; color: var(--text-dim); text-align: center; margin-bottom: 1rem;">
+                        Track your daily habits. Rings represent Alignment, Consistency, and Breaks.
+                    </div>
+
+                    <!-- Alert Settings (inline in Stats) -->
+                    <hr style="border:none;border-top:1px solid rgba(255,255,255,0.07);margin:1rem 0;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.75rem;">
+                        <span style="font-size:0.9rem;font-weight:600;color:var(--accent-color);">🔔 Bad Posture
+                            Alert</span>
+                        <label
+                            style="display:flex;align-items:center;gap:0.5rem;cursor:pointer;font-size:0.85rem;color:var(--text-dim);">
+                            <input type="checkbox" id="alert-enabled"
+                                style="width:auto;accent-color:var(--accent-color);">
+                            Enabled
+                        </label>
+                    </div>
+                    <div class="input-group" style="margin-bottom:1rem;">
+                        <label>Alert after <span id="alert-threshold-val">30</span>s of continuous bad posture</label>
+                        <input type="range" id="alert-threshold" min="5" max="300" step="5" value="30"
+                            style="width:100%;">
+                    </div>
+
+                    <button class="btn btn-secondary" id="clear-history-btn">Clear History</button>
+                </div>
+
+                <!-- Connectivity Tab -->
+                <div id="connectivity" class="tab-content">
+                    <div class="card-title">Home Assistant Webhook</div>
+                    <div style="color: var(--text-dim); font-size: 0.8rem; margin-bottom: 1.25rem; line-height: 1.6;">
+                        In HA: create an <strong style="color:var(--text-main)">Automation → Webhook trigger</strong>.
+                        Copy the webhook URL HA gives you and paste it below.
+                        PostureAI will POST <code
+                            style="font-size:0.75rem;background:rgba(0,0,0,0.3);padding:1px 4px;border-radius:4px;">{"posture":"good", ...}</code>
+                        on every posture change.
+                    </div>
+                    <div class="input-group">
+                        <label>Enable</label>
+                        <select id="ha-enabled">
+                            <option value="false">Disabled</option>
+                            <option value="true">Enabled</option>
+                        </select>
+                    </div>
+                    <div class="input-group">
+                        <label>Webhook URL</label>
+                        <input type="text" id="ha-webhook-url"
+                            placeholder="http://homeassistant.local:8123/api/webhook/your-id">
+                    </div>
+                    <div style="display:flex;gap:0.5rem;">
+                        <button class="btn btn-primary" style="flex:1" id="save-ha-btn">Save</button>
+                        <button class="btn btn-secondary" style="flex:1" id="test-ha-btn">🧪 Test</button>
+                    </div>
+                    <div id="ha-status"
+                        style="margin-top:0.75rem;font-size:0.75rem;color:var(--text-dim);text-align:center;"></div>
+                </div>
+            </div>
+        </div>
+
+    </main>
+
+    <script>
+        // --- State Management ---
+        const state = {
+            detector: null,
+            model: null,
+            dataset: [], // { label, keypoints }
+            labels: ["good", "bad"],
+            labelColors: { good: '#22c55e', bad: '#ef4444' }, // persistent per-label colors
+            isTraining: false,
+            isPredicting: false,
+            currentKeypoints: null,
+            predictionBuffer: [], // For smoothing
+            bufferSize: 10,
+            lastPrediction: null,
+            predictionColor: 'white',
+            video: document.getElementById('video'),
+            canvas: document.getElementById('output'),
+            ctx: document.getElementById('output').getContext('2d'),
+            predictionOverlay: document.getElementById('prediction'),
+            // HA Settings
+            haEnabled: false,
+            haWebhookUrl: '',
+            // Session Stats
+            sessionStart: Date.now(),
+            stats: {},
+            history: JSON.parse(localStorage.getItem('posture-history') || '[]'),
+            charts: { trend: null, clock: null },
+            lastHistoryUpdate: 0,
+            lastUpdateTime: null,
+            heatmapDayOffset: 0,  // 0 = today, -1 = yesterday, etc.
+            // Alert
+            alertEnabled: false,
+            alertThreshold: 30,  // seconds
+            badPostureStart: null,
+            lastAlertTime: null,
+            alertCount: 0
+        };
+
+        // Auto-restore labels, dataset, and stats on startup
+        (function restoreSession() {
+            const savedLabels = localStorage.getItem('posture-labels');
+            const savedDataset = localStorage.getItem('posture-dataset');
+            const savedStats = localStorage.getItem('posture-stats');
+            const savedColors = localStorage.getItem('posture-label-colors');
+            const savedAlert = localStorage.getItem('posture-alert-settings');
+            if (savedLabels) state.labels = JSON.parse(savedLabels);
+            if (savedDataset) state.dataset = JSON.parse(savedDataset);
+            if (savedStats) state.stats = JSON.parse(savedStats);
+            if (savedColors) state.labelColors = { ...state.labelColors, ...JSON.parse(savedColors) };
+            if (savedAlert) {
+                const a = JSON.parse(savedAlert);
+                state.alertEnabled = a.enabled ?? false;
+                state.alertThreshold = a.threshold ?? 30;
+            }
+
+            // Sync UI controls with restored values
+            const cbEl = document.getElementById('alert-enabled');
+            const slEl = document.getElementById('alert-threshold');
+            const valEl = document.getElementById('alert-threshold-val');
+            if (cbEl) cbEl.checked = state.alertEnabled;
+            if (slEl) { slEl.value = state.alertThreshold; }
+            if (valEl) valEl.textContent = state.alertThreshold;
+        })();
+
+        // Return a consistent color for any label.
+        // 'good' → green, 'bad'/'slouch' → red, everything else uses assigned random HSL.
+        function getLabelColor(label) {
+            if (state.labelColors[label]) return state.labelColors[label];
+            // Generate a vivid, randomised HSL color and persist it
+            const hue = Math.floor(Math.random() * 360);
+            const color = `hsl(${hue}, 80%, 58%)`;
+            state.labelColors[label] = color;
+            localStorage.setItem('posture-label-colors', JSON.stringify(state.labelColors));
+            return color;
+        }
+
+        // --- Alert Logic ---
+        function saveAlertSettings() {
+            localStorage.setItem('posture-alert-settings', JSON.stringify({
+                enabled: state.alertEnabled,
+                threshold: state.alertThreshold
+            }));
+        }
+
+        // Shared AudioContext — created once on first user gesture to avoid auto-suspend
+        let _audioCtx = null;
+        function getAudioCtx() {
+            if (!_audioCtx) _audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            return _audioCtx;
+        }
+
+        // urgency: 0 = first alert, 1+ = escalating repeats
+        function playBeep(urgency = 0) {
+            try {
+                const ctx = getAudioCtx();
+                const doPlay = () => {
+                    // Pitch and volume scale up with each repeat (capped)
+                    const baseFreq = 440 + Math.min(urgency * 60, 460); // 440 → 900 Hz
+                    const vol = Math.min(0.4 + urgency * 0.08, 0.85);
+                    const pulses = Math.min(1 + urgency, 4); // more pulses each time
+
+                    for (let i = 0; i < pulses; i++) {
+                        const osc = ctx.createOscillator();
+                        const gain = ctx.createGain();
+                        osc.connect(gain);
+                        gain.connect(ctx.destination);
+                        osc.type = 'sine';
+                        const t = ctx.currentTime + i * 0.22;
+                        osc.frequency.setValueAtTime(baseFreq, t);
+                        osc.frequency.setValueAtTime(baseFreq * 0.85, t + 0.1);
+                        gain.gain.setValueAtTime(vol, t);
+                        gain.gain.exponentialRampToValueAtTime(0.001, t + 0.2);
+                        osc.start(t);
+                        osc.stop(t + 0.22);
+                    }
+                };
+                if (ctx.state === 'suspended') {
+                    ctx.resume().then(doPlay);
+                } else {
+                    doPlay();
+                }
+            } catch (e) { console.warn('Beep failed:', e); }
+        }
+
+        function fireAlert(label, seconds, urgency = 0) {
+            playBeep(urgency);
+            if (Notification.permission === 'granted') {
+                new Notification('PostureAI ⚠️', {
+                    body: `Bad posture ("${label}") for ${Math.round(seconds)}s — sit up!`,
+                    icon: 'data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🧍</text></svg>'
+                });
+            }
+        }
+
+        // Wire up alert controls
+        document.getElementById('alert-enabled').addEventListener('change', (e) => {
+            state.alertEnabled = e.target.checked;
+            if (state.alertEnabled && Notification.permission === 'default') {
+                Notification.requestPermission();
+            }
+            saveAlertSettings();
+        });
+
+        document.getElementById('alert-threshold').addEventListener('input', (e) => {
+            state.alertThreshold = parseInt(e.target.value);
+            document.getElementById('alert-threshold-val').textContent = state.alertThreshold;
+            // reset repeat counter so a fresh series starts at the new threshold
+            state.lastAlertTime = null;
+            state.alertCount = 0;
+            saveAlertSettings();
+        });
+
+        // --- Layout/UI Logic ---
+        document.querySelectorAll('.tab-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+                document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+                btn.classList.add('active');
+                document.getElementById(btn.dataset.tab).classList.add('active');
+            });
+        });
+
+        // Sync range inputs with text displays
+        ['epochs', 'lr', 'hidden'].forEach(id => {
+            const input = document.getElementById(`${id}-input`);
+            const val = document.getElementById(`${id}-val`);
+            input.addEventListener('input', () => val.textContent = input.value);
+        });
+
+        // --- Pose Detection Logic ---
+        async function setupCamera() {
+            const stream = await navigator.mediaDevices.getUserMedia({
+                video: { width: 640, height: 480 },
+                audio: false
+            });
+            state.video.srcObject = stream;
+            return new Promise((resolve) => {
+                state.video.onloadedmetadata = () => {
+                    state.video.play();
+                    state.canvas.width = state.video.videoWidth;
+                    state.canvas.height = state.video.videoHeight;
+                    resolve();
+                };
+            });
+        }
+
+        async function initPoseDetection() {
+            try {
+                updateStatus('loading', 'Loading MediaPipe...');
+
+                // Dynamic import — works regardless of script execution order
+                const mpVision = await import('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs');
+                const { PoseLandmarker, FilesetResolver } = mpVision;
+
+                const vision = await FilesetResolver.forVisionTasks(
+                    'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm'
+                );
+                state.detector = await PoseLandmarker.createFromOptions(vision, {
+                    baseOptions: {
+                        modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task',
+                        delegate: 'GPU'
+                    },
+                    runningMode: 'VIDEO',
+                    numPoses: 1,
+                    minPoseDetectionConfidence: 0.5,
+                    minPosePresenceConfidence: 0.5,
+                    minTrackingConfidence: 0.5
+                });
+                updateStatus('ready', 'Camera & AI Ready');
+                detectLoop();
+
+                // Auto-load the saved model if one exists
+                try {
+                    const modelList = await tf.io.listModels();
+                    if (modelList['localstorage://posture-model']) {
+                        const loadedModel = await tf.loadLayersModel('localstorage://posture-model');
+                        state.model = loadedModel;
+                        state.isPredicting = true;
+                        state.predictionOverlay.classList.add('active');
+                        updateStatus('ready', 'Model restored — predicting');
+                    }
+                } catch (loadErr) {
+                    console.warn('Auto-load skipped (no saved model):', loadErr);
+                }
+            } catch (err) {
+                console.error('MediaPipe load error:', err);
+                updateStatus('error', 'Failed to load MediaPipe: ' + err.message);
+            }
+        }
+
+        function updateStatus(type, text) {
+            const dot = document.querySelector('.status-dot');
+            const txt = document.getElementById('status-text');
+            dot.className = `status-dot status-${type}`;
+            txt.textContent = text;
+        }
+
+        async function detectLoop() {
+            try {
+                if (state.video.readyState >= 2) {
+                    const result = state.detector.detectForVideo(state.video, performance.now());
+
+                    state.ctx.clearRect(0, 0, state.canvas.width, state.canvas.height);
+                    state.ctx.save();
+                    state.ctx.scale(-1, 1);
+                    state.ctx.drawImage(state.video, -state.canvas.width, 0, state.canvas.width, state.canvas.height);
+                    state.ctx.restore();
+
+                    if (result.landmarks && result.landmarks.length > 0) {
+                        const landmarks = result.landmarks[0]; // normalized 0-1
+                        state.currentKeypoints = landmarks;
+
+                        let color = 'white';
+                        if (state.isPredicting) {
+                            predictPosture(landmarks);
+                            color = state.predictionColor || 'white';
+                        }
+                        drawSkeleton(landmarks, color);
+                    }
+                }
+            } catch (err) {
+                console.warn('detectLoop frame error (will retry):', err);
+            }
+            requestAnimationFrame(detectLoop);
+        }
+
+        // MediaPipe Pose connections (33 landmarks)
+        const MP_CONNECTIONS = [
+            [0, 1], [1, 2], [2, 3], [3, 7], [0, 4], [4, 5], [5, 6], [6, 8],
+            [9, 10], [11, 12], [11, 13], [13, 15], [15, 17], [15, 19], [15, 21], [17, 19],
+            [12, 14], [14, 16], [16, 18], [16, 20], [16, 22], [18, 20],
+            [11, 23], [12, 24], [23, 24], [23, 25], [24, 26], [25, 27], [26, 28],
+            [27, 29], [28, 30], [29, 31], [30, 32], [27, 31], [28, 32]
+        ];
+
+        function drawSkeleton(landmarks, color = 'white') {
+            const ctx = state.ctx;
+            const W = state.canvas.width;
+            const H = state.canvas.height;
+
+            // Draw connections
+            MP_CONNECTIONS.forEach(([i, j]) => {
+                const a = landmarks[i];
+                const b = landmarks[j];
+                if (!a || !b) return;
+                if ((a.visibility ?? 1) < 0.3 || (b.visibility ?? 1) < 0.3) return;
+                ctx.beginPath();
+                ctx.moveTo(W - a.x * W, a.y * H);
+                ctx.lineTo(W - b.x * W, b.y * H);
+                ctx.strokeStyle = color;
+                ctx.lineWidth = 3;
+                ctx.stroke();
+            });
+
+            // Draw landmarks
+            landmarks.forEach(lm => {
+                if ((lm.visibility ?? 1) < 0.3) return;
+                ctx.beginPath();
+                ctx.arc(W - lm.x * W, lm.y * H, 4, 0, 2 * Math.PI);
+                ctx.fillStyle = color;
+                ctx.fill();
+                ctx.strokeStyle = '#000';
+                ctx.lineWidth = 1;
+                ctx.stroke();
+            });
+        }
+
+        // --- Data Collection Logic ---
+        function updateLabelsUI() {
+            const container = document.getElementById('label-tags-container');
+            const captureContainer = document.getElementById('capture-buttons-container');
+
+            container.innerHTML = '';
+            captureContainer.innerHTML = '';
+
+            state.labels.forEach((label, index) => {
+                const count = state.dataset.filter(d => d.label === label).length;
+
+                // Tag for management list
+                const tag = document.createElement('div');
+                tag.className = 'label-tag';
+                tag.innerHTML = `
+                    ${label}
+                    <button class="remove-btn" onclick="removeLabel(${index})">&times;</button>
+                `;
+                container.appendChild(tag);
+
+                // Big capture button
+                const btn = document.createElement('button');
+                btn.className = 'btn capture-label-btn';
+
+                // Apply per-label color to border and hover glow
+                const lc = getLabelColor(label);
+                btn.style.borderColor = lc + '55'; // semi-transparent border
+                btn.style.setProperty('--label-color', lc);
+                btn.onmouseenter = () => {
+                    btn.style.background = lc + '22';
+                    btn.style.borderColor = lc;
+                    btn.style.boxShadow = `0 10px 20px -5px rgba(0,0,0,0.3), 0 0 15px ${lc}55`;
+                };
+                btn.onmouseleave = () => {
+                    btn.style.background = '';
+                    btn.style.borderColor = lc + '55';
+                    btn.style.boxShadow = '';
+                };
+
+                btn.innerHTML = `
+                    <span class="btn-label-text">${label}</span>
+                    <span class="btn-count" style="color:${lc}">${count}</span>
+                `;
+                btn.onclick = () => captureSample(label);
+                captureContainer.appendChild(btn);
+            });
+
+            // Note: total-samples and unique-labels were replaced by the Stats tab summary
+            // But we can still update them if they exist somewhere else or in updateStatsUI
+            if (typeof updateStatsUI === 'function') updateStatsUI();
+        }
+
+        function removeLabel(index) {
+            state.labels.splice(index, 1);
+            updateLabelsUI();
+        }
+
+        function captureSample(targetLabel) {
+            if (!state.currentKeypoints) return;
+            if (!targetLabel) return;
+
+            // MediaPipe landmarks are already normalized (x, y, z in 0-1 / relative range)
+            const flattened = [];
+            state.currentKeypoints.forEach(lm => {
+                flattened.push(lm.x);
+                flattened.push(lm.y);
+                flattened.push(lm.z ?? 0);
+            });
+
+            state.dataset.push({
+                label: targetLabel,
+                data: flattened
+            });
+            updateLabelsUI();
+        }
+
+        document.getElementById('add-label-btn').addEventListener('click', () => {
+            const input = document.getElementById('label-input');
+            const val = input.value.trim().toLowerCase();
+            if (val && !state.labels.includes(val)) {
+                state.labels.push(val);
+                getLabelColor(val); // eagerly assign & persist color
+                localStorage.setItem('posture-label-colors', JSON.stringify(state.labelColors));
+                input.value = '';
+                updateLabelsUI();
+            }
+        });
+        document.getElementById('export-btn').addEventListener('click', () => {
+            const dataStr = JSON.stringify({ labels: state.labels, dataset: state.dataset });
+            const blob = new Blob([dataStr], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'posture-dataset.json';
+            a.click();
+        });
+
+        document.getElementById('import-input').addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                const imported = JSON.parse(event.target.result);
+                state.labels = imported.labels;
+                state.dataset = imported.dataset;
+                updateLabelsUI();
+            };
+            reader.readAsText(file);
+        });
+
+        // --- Model Training Logic ---
+        async function trainModel() {
+            if (state.dataset.length < 5) {
+                alert("Need at least 5 samples to train!");
+                return;
+            }
+
+            state.isTraining = true;
+            document.getElementById('train-btn').disabled = true;
+            document.getElementById('train-btn').textContent = "Training...";
+
+            try {
+                const numLabels = state.labels.length;
+                const numHidden = parseInt(document.getElementById('hidden-input').value);
+                const epochs = parseInt(document.getElementById('epochs-input').value);
+                const lr = parseFloat(document.getElementById('lr-input').value);
+
+                // 1. Prepare Data
+                const xData = state.dataset.map(d => d.data);
+                const yData = state.dataset.map(d => state.labels.indexOf(d.label));
+
+                // Derive input size from data (works with any backend)
+                const inputSize = xData[0].length;
+
+                const xs = tf.tensor2d(xData);
+                const ys = tf.oneHot(tf.tensor1d(yData, 'int32'), numLabels);
+
+                // 2. Build Model (inputShape is dynamic)
+                const model = tf.sequential();
+                model.add(tf.layers.dense({ inputShape: [inputSize], units: numHidden, activation: 'relu' }));
+                model.add(tf.layers.dense({ units: numHidden, activation: 'relu' }));
+                model.add(tf.layers.dense({ units: numLabels, activation: 'softmax' }));
+
+                model.compile({
+                    optimizer: tf.train.adam(lr),
+                    loss: 'categoricalCrossentropy',
+                    metrics: ['accuracy']
+                });
+
+                // 3. Train
+                await model.fit(xs, ys, {
+                    epochs: epochs,
+                    callbacks: {
+                        onEpochEnd: (epoch, logs) => {
+                            document.getElementById('train-epoch').textContent = epoch + 1;
+                            document.getElementById('train-loss').textContent = logs.loss.toFixed(4);
+                            document.getElementById('train-acc').textContent = (logs.acc ?? logs.accuracy ?? 0).toFixed(4);
+                            document.getElementById('train-progress').style.width = `${((epoch + 1) / epochs) * 100}%`;
+                        }
+                    }
+                });
+
+                state.model = model;
+                state.isPredicting = true;
+                state.predictionOverlay.classList.add('active');
+
+                // Auto-save so the model survives a page reload
+                try {
+                    await model.save('localstorage://posture-model');
+                    localStorage.setItem('posture-labels', JSON.stringify(state.labels));
+                    localStorage.setItem('posture-dataset', JSON.stringify(state.dataset));
+                    localStorage.setItem('posture-stats', JSON.stringify(state.stats));
+                    localStorage.setItem('posture-label-colors', JSON.stringify(state.labelColors));
+                } catch (saveErr) {
+                    console.warn('Auto-save failed:', saveErr);
+                }
+
+                xs.dispose();
+                ys.dispose();
+            } catch (err) {
+                console.error('Training error:', err);
+                alert('Training failed: ' + err.message);
+            } finally {
+                state.isTraining = false;
+                document.getElementById('train-btn').disabled = false;
+                document.getElementById('train-btn').textContent = "Retrain Model";
+            }
+        }
+
+        document.getElementById('train-btn').addEventListener('click', trainModel);
+
+        // --- Prediction Logic ---
+        function predictPosture(landmarks) {
+            if (!state.model || state.isTraining) return;
+
+            tf.tidy(() => {
+                // MediaPipe landmarks already normalized (x, y, z in 0-1 range)
+                const flattened = [];
+                landmarks.forEach(lm => {
+                    flattened.push(lm.x);
+                    flattened.push(lm.y);
+                    flattened.push(lm.z ?? 0);
+                });
+
+                const input = tf.tensor2d([flattened]);
+                const prediction = state.model.predict(input);
+                const scores = prediction.dataSync();
+                const maxIndex = prediction.argMax(1).dataSync()[0];
+                const label = state.labels[maxIndex];
+
+                // --- Smoothing Logic ---
+                state.predictionBuffer.push(maxIndex);
+                if (state.predictionBuffer.length > state.bufferSize) {
+                    state.predictionBuffer.shift();
+                }
+
+                // Find most frequent in buffer
+                const counts = {};
+                let smoothedIndex = maxIndex;
+                let maxCount = 0;
+                state.predictionBuffer.forEach(idx => {
+                    counts[idx] = (counts[idx] || 0) + 1;
+                    if (counts[idx] > maxCount) {
+                        maxCount = counts[idx];
+                        smoothedIndex = idx;
+                    }
+                });
+
+                const smoothedLabel = state.labels[smoothedIndex];
+                const confidence = scores[smoothedIndex];
+
+                state.predictionOverlay.textContent = `${smoothedLabel.toUpperCase()} (${(confidence * 100).toFixed(1)}%)`;
+
+                // Track stats
+                const now = Date.now();
+                const delta = (now - (state.lastUpdateTime || now)) / 1000;
+                state.lastUpdateTime = now;
+
+                state.predictionColor = getLabelColor(smoothedLabel);
+
+                state.stats[smoothedLabel] = (state.stats[smoothedLabel] || 0) + delta;
+
+                state.predictionOverlay.style.color = state.predictionColor;
+
+                // --- Bad posture alert timer (repeating + escalating) ---
+                if (state.alertEnabled) {
+                    const isGood = smoothedLabel.includes('good');
+                    if (isGood) {
+                        // Good posture: reset everything
+                        state.badPostureStart = null;
+                        state.lastAlertTime = null;
+                        state.alertCount = 0;
+                    } else {
+                        const nowMs = Date.now();
+                        if (!state.badPostureStart) state.badPostureStart = nowMs;
+                        const elapsed = (nowMs - state.badPostureStart) / 1000;
+                        // Fire first alert at threshold; repeat every threshold seconds after that
+                        const nextAlertDue = state.lastAlertTime === null
+                            ? state.badPostureStart + state.alertThreshold * 1000
+                            : state.lastAlertTime + state.alertThreshold * 1000;
+                        if (nowMs >= nextAlertDue) {
+                            fireAlert(smoothedLabel, elapsed, state.alertCount);
+                            state.lastAlertTime = nowMs;
+                            state.alertCount++;
+                        }
+                    }
+                }
+
+                // Sync with HA if state changed
+                if (smoothedLabel !== state.lastPrediction) {
+                    syncToHomeAssistant(smoothedLabel);
+                    state.lastPrediction = smoothedLabel;
+                }
+
+                updateStatsUI();
+                recordHistory(smoothedLabel);
+            });
+        }
+
+        function recordHistory(label) {
+            const now = Date.now();
+            // Record snapshot every 10 seconds or when state changes
+            if (now - state.lastHistoryUpdate > 10000 || label !== state.lastPrediction) {
+                state.history.push({
+                    t: now,
+                    l: label
+                });
+                state.lastHistoryUpdate = now;
+
+                // Keep last 2000 points (~5.5 hours at 10s intervals if continuous)
+                if (state.history.length > 2000) state.history.shift();
+
+                // Persist history and live stats
+                localStorage.setItem('posture-history', JSON.stringify(state.history));
+                localStorage.setItem('posture-stats', JSON.stringify(state.stats));
+
+                if (state.charts.trend) updateCharts();
+                else updateCharts();
+            }
+        }
+
+        function initChart() {
+            const trendCtx = document.getElementById('postureChart');
+            if (!trendCtx) return; // Charts might be removed but calls remain
+
+            state.charts.trend = new Chart(trendCtx.getContext('2d'), {
+                type: 'line',
+                data: { datasets: [] },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: {
+                            type: 'linear',
+                            title: { display: false },
+                            grid: { color: 'rgba(255,255,255,0.05)' },
+                            ticks: {
+                                color: '#94a3b8',
+                                font: { size: 9 },
+                                callback: function (value) {
+                                    return new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                                }
+                            }
+                        },
+                        y: {
+                            grid: { color: 'rgba(255,255,255,0.05)' },
+                            ticks: {
+                                font: { size: 9 },
+                                callback: (v) => state.labels[v] || '',
+                                stepSize: 1,
+                                color: '#94a3b8'
+                            }
+                        }
+                    },
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            callbacks: {
+                                title: (items) => new Date(items[0].raw.x).toLocaleString(),
+                                label: (item) => `Posture: ${state.labels[item.raw.y]}`
+                            }
+                        },
+                        zoom: {
+                            pan: { enabled: true, mode: 'x' },
+                            zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'x' }
+                        }
+                    }
+                }
+            });
+
+            if (state.history.length > 0) updateCharts();
+        }
+
+        function updateCharts() {
+            const now = Date.now();
+
+            // 1. Update Trend Chart if it exists
+            if (state.charts.trend) {
+                const trendData = state.history.map(h => ({
+                    x: h.t,
+                    y: state.labels.indexOf(h.l)
+                }));
+
+                state.charts.trend.data.datasets = [{
+                    data: trendData,
+                    borderColor: 'var(--accent-color)',
+                    backgroundColor: 'rgba(56, 189, 248, 0.1)',
+                    borderWidth: 2,
+                    pointRadius: 0,
+                    fill: true,
+                    stepped: true
+                }];
+                state.charts.trend.update('none');
+            }
+
+            // 2. Update 24×60 Day Heatmap (today only, per-minute)
+            const dayHeatmap = document.getElementById('posture-day-heatmap');
+            if (dayHeatmap) {
+                const todayStr = new Date().toDateString();
+                const nowD = new Date();
+                const currentHour = nowD.getHours();
+                const currentMin = nowD.getMinutes();
+
+                // Bin today's history into [hour][minute] buckets
+                const bins = Array.from({ length: 24 }, () =>
+                    Array.from({ length: 60 }, () => ({}))
+                );
+                state.history.forEach(h => {
+                    const d = new Date(h.t);
+                    if (d.toDateString() !== todayStr) return;
+                    const hr = d.getHours(), mn = d.getMinutes();
+                    bins[hr][mn][h.l] = (bins[hr][mn][h.l] || 0) + 1;
+                });
+
+                // Minute column header labels
+                let html = `<div class="day-heatmap-min-labels">
+                    <div class="day-heatmap-min-label" style="flex:1">:00</div>
+                    <div class="day-heatmap-min-label" style="flex:14"> </div>
+                    <div class="day-heatmap-min-label" style="flex:1">:15</div>
+                    <div class="day-heatmap-min-label" style="flex:14"> </div>
+                    <div class="day-heatmap-min-label" style="flex:1">:30</div>
+                    <div class="day-heatmap-min-label" style="flex:14"> </div>
+                    <div class="day-heatmap-min-label" style="flex:1">:45</div>
+                    <div class="day-heatmap-min-label" style="flex:14"> </div>
+                </div>`;
+
+                for (let hr = 0; hr < 24; hr++) {
+                    html += `<div class="day-row"><div class="day-row-label">${hr.toString().padStart(2, '0')}</div><div class="day-row-cells">`;
+                    for (let mn = 0; mn < 60; mn++) {
+                        const bucket = bins[hr][mn];
+                        const entries = Object.entries(bucket);
+                        const isCurrent = hr === currentHour && mn === currentMin;
+                        let bg = 'rgba(255,255,255,0.05)', opacity = '0.3';
+                        let title = `${hr.toString().padStart(2, '0')}:${mn.toString().padStart(2, '0')} — no data`;
+                        if (entries.length > 0) {
+                            const dominant = entries.sort((a, b) => b[1] - a[1])[0][0];
+                            bg = getLabelColor(dominant);
+                            opacity = '0.85';
+                            title = `${hr.toString().padStart(2, '0')}:${mn.toString().padStart(2, '0')} — ${dominant}`;
+                        }
+                        html += `<div class="day-min-cell${isCurrent ? ' current-min' : ''}" style="background:${bg};opacity:${opacity};" title="${title}"></div>`;
+                    }
+                    html += `</div></div>`;
+                }
+
+                dayHeatmap.innerHTML = html;
+            }
+
+            // 3. Update Rings
+            const total = state.history.length || 1;
+            const goodTime = state.history.filter(h => h.l.includes('good')).length;
+            const uprightPct = goodTime / total;
+
+            let maxStreak = 0;
+            let currentStreak = 0;
+            state.history.forEach(h => {
+                if (h.l.includes('good')) currentStreak++;
+                else { maxStreak = Math.max(maxStreak, currentStreak); currentStreak = 0; }
+            });
+            maxStreak = Math.max(maxStreak, currentStreak);
+            const consistencyPct = Math.min(maxStreak / 20, 1);
+
+            let switches = 0;
+            for (let i = 1; i < state.history.length; i++) {
+                if (state.history[i].l !== state.history[i - 1].l) switches++;
+            }
+            const breaksPct = Math.min(switches / 12, 1);
+
+            const uprightEl = document.getElementById('ring-upright');
+            const consistencyEl = document.getElementById('ring-consistency');
+            const breaksEl = document.getElementById('ring-breaks');
+
+            if (uprightEl) uprightEl.style.strokeDasharray = `${uprightPct * 377} 377`;
+            if (consistencyEl) consistencyEl.style.strokeDasharray = `${consistencyPct * 301} 301`;
+            if (breaksEl) breaksEl.style.strokeDasharray = `${breaksPct * 226} 226`;
+
+            // 4. Update Score
+            const score = Math.round((uprightPct * 50) + (consistencyPct * 30) + (breaksPct * 20));
+            const scoreEl = document.getElementById('health-score');
+            if (scoreEl) scoreEl.innerText = score;
+        }
+
+        function drawAvgAvatar(health) {
+            const canvas = document.getElementById('avgPostureCanvas');
+            if (!canvas) return;
+            const ctx = canvas.getContext('2d');
+            const w = canvas.width = canvas.offsetWidth;
+            const h = canvas.height = canvas.offsetHeight;
+            ctx.clearRect(0, 0, w, h);
+
+            const centerX = w / 2;
+            const lean = (1 - health) * 20;
+
+            ctx.strokeStyle = '#94a3b8';
+            ctx.shadowBlur = 10;
+            ctx.shadowColor = health > 0.7 ? '#22c55e' : '#ef4444';
+            ctx.lineWidth = 4;
+            ctx.lineCap = 'round';
+
+            // Head
+            ctx.beginPath();
+            ctx.arc(centerX + lean, 30, 8, 0, Math.PI * 2);
+            ctx.stroke();
+
+            // Spine
+            ctx.beginPath();
+            ctx.moveTo(centerX + lean, 38);
+            ctx.bezierCurveTo(centerX + lean, 60, centerX, 70, centerX, 120);
+            ctx.stroke();
+
+            // Shoulders
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(centerX + lean - 15, 45);
+            ctx.lineTo(centerX + lean + 15, 45);
+            ctx.stroke();
+        }
+
+        function showHourDetail(dayHistory, hour) {
+            const detail = document.getElementById('heatmap-detail');
+            if (!detail) return;
+
+            const hrStr = hour.toString().padStart(2, '0');
+            const entries = dayHistory.filter(h => new Date(h.t).getHours() === hour);
+
+            // Build 60 per-minute buckets
+            const minBuckets = Array.from({ length: 60 }, () => ({}));
+            entries.forEach(h => {
+                const min = new Date(h.t).getMinutes();
+                minBuckets[min][h.l] = (minBuckets[min][h.l] || 0) + 1;
+            });
+
+            // Render mini heatmap header + 60 cells
+            let html = `<div style="color:var(--accent-color);font-weight:600;margin-bottom:6px;font-size:0.75rem;">${hrStr}:00 — ${hrStr}:59</div>
+                <div style="display:grid;grid-template-columns:repeat(60,1fr);gap:2px;width:100%;">`;
+
+            for (let min = 0; min < 60; min++) {
+                const bucket = minBuckets[min];
+                const bucketEntries = Object.entries(bucket);
+                let bg = 'rgba(255,255,255,0.07)';
+                let opacity = '0.3';
+                let title = `${hrStr}:${min.toString().padStart(2, '0')} — no data`;
+
+                if (bucketEntries.length > 0) {
+                    const dominant = bucketEntries.sort((a, b) => b[1] - a[1])[0][0];
+                    bg = dominant.includes('good') ? '#22c55e' : (dominant.includes('bad') || dominant.includes('slouch') ? '#ef4444' : '#38bdf8');
+                    opacity = '0.85';
+                    title = `${hrStr}:${min.toString().padStart(2, '0')} — ${dominant}`;
+                }
+
+                html += `<div title="${title}" style="height:20px;border-radius:2px;background:${bg};opacity:${opacity};"></div>`;
+            }
+
+            html += `</div><div style="display:flex;justify-content:space-between;font-size:0.55rem;color:var(--text-dim);margin-top:2px;"><span>:00</span><span>:15</span><span>:30</span><span>:45</span><span>:59</span></div>`;
+            detail.innerHTML = html;
+        }
+
+        // Day navigator buttons (guard against elements not existing after heatmap redesign)
+        document.getElementById('heatmap-prev')?.addEventListener('click', () => {
+            state.heatmapDayOffset--;
+            document.getElementById('heatmap-detail').innerHTML = '';
+            updateCharts();
+        });
+
+        document.getElementById('heatmap-next')?.addEventListener('click', () => {
+            if (state.heatmapDayOffset < 0) {
+                state.heatmapDayOffset++;
+                document.getElementById('heatmap-detail').innerHTML = '';
+                updateCharts();
+            }
+        });
+
+        // --- Reset / Clear buttons ---
+        document.getElementById('clear-collection-btn').addEventListener('click', () => {
+            if (!confirm('Clear all training samples and labels? The current model will stay loaded but you\'ll need to retrain.')) return;
+            state.dataset = [];
+            state.labels = ['good', 'bad'];
+            state.labelColors = { good: '#22c55e', bad: '#ef4444' };
+            localStorage.removeItem('posture-dataset');
+            localStorage.removeItem('posture-labels');
+            localStorage.removeItem('posture-label-colors');
+            updateLabelsUI();
+            updateStatsUI();
+            alert('Collection cleared. Labels reset to [good, bad].');
+        });
+
+        document.getElementById('clear-model-btn').addEventListener('click', async () => {
+            if (!confirm('Remove the saved model from LocalStorage?')) return;
+            try {
+                await tf.io.removeModel('localstorage://posture-model');
+            } catch (_) { /* model might not exist */ }
+            state.model = null;
+            state.isPredicting = false;
+            state.predictionOverlay.classList.remove('active');
+            alert('Saved model removed. Train a new one to continue predicting.');
+        });
+
+        document.getElementById('clear-all-btn').addEventListener('click', async () => {
+            if (!confirm('⚠ This will clear EVERYTHING — model, collection, labels, stats, and history. Are you sure?')) return;
+            // Clear all localStorage keys
+            ['posture-model', 'posture-labels', 'posture-dataset', 'posture-stats', 'posture-history', 'posture-ha-settings', 'posture-label-colors'].forEach(k => localStorage.removeItem(k));
+            try { await tf.io.removeModel('localstorage://posture-model'); } catch (_) { }
+            // Reset in-memory state
+            state.dataset = [];
+            state.labels = ['good', 'bad'];
+            state.labelColors = { good: '#22c55e', bad: '#ef4444' };
+            state.model = null;
+            state.stats = {};
+            state.history = [];
+            state.isPredicting = false;
+            state.predictionOverlay.classList.remove('active');
+            updateLabelsUI();
+            updateStatsUI();
+            updateCharts();
+            alert('Everything has been reset. Fresh start!');
+        });
+
+
+        function updateStatsUI() {
+            const grid = document.getElementById('session-stats-grid');
+            if (!grid) return; // Null-safe fallback
+
+            const formatTime = (s) => {
+                const mins = Math.floor(s / 60);
+                const secs = Math.floor(s % 60);
+                return `${mins}m ${secs}s`;
+            };
+
+            // Build total stats display
+            let html = `
+                <div class="stat-card">
+                    <span class="stat-val">${state.dataset.length}</span>
+                    <span class="stat-label">Samples</span>
+                </div>
+            `;
+
+            // Add time for each label that has some time tracked
+            state.labels.forEach(label => {
+                const time = state.stats[label] || 0;
+                if (time > 0 || state.isPredicting) {
+                    html += `
+                        <div class="stat-card">
+                            <span class="stat-val" style="font-size: 1rem; color: ${getLabelColor(label)}">
+                                ${formatTime(time)}
+                            </span>
+                            <span class="stat-label">${label}</span>
+                        </div>
+                    `;
+                }
+            });
+
+            grid.innerHTML = html;
+        }
+
+        // --- Webhook Integration ---
+        async function syncToHomeAssistant(posture) {
+            if (!state.haEnabled || !state.haWebhookUrl) return;
+            try {
+                await fetch(state.haWebhookUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        posture,
+                        is_good: posture.includes('good'),
+                        elapsed_bad_s: posture.includes('good') ? 0 : Math.round(
+                            state.badPostureStart ? (Date.now() - state.badPostureStart) / 1000 : 0
+                        ),
+                        stats: Object.fromEntries(
+                            Object.entries(state.stats).map(([k, v]) => [k, Math.round(v)])
+                        )
+                    })
+                });
+            } catch (err) {
+                console.warn('Webhook error:', err);
+            }
+        }
+
+        document.getElementById('save-ha-btn').addEventListener('click', () => {
+            state.haEnabled = document.getElementById('ha-enabled').value === 'true';
+            state.haWebhookUrl = document.getElementById('ha-webhook-url').value.trim();
+            localStorage.setItem('posture-ha-settings', JSON.stringify({
+                enabled: state.haEnabled,
+                webhookUrl: state.haWebhookUrl
+            }));
+            const statusEl = document.getElementById('ha-status');
+            statusEl.textContent = '✅ Settings saved.';
+            setTimeout(() => statusEl.textContent = '', 2500);
+        });
+
+        document.getElementById('test-ha-btn').addEventListener('click', async () => {
+            const statusEl = document.getElementById('ha-status');
+            if (!state.haWebhookUrl) {
+                statusEl.style.color = 'var(--danger)';
+                statusEl.textContent = '⚠️ Enter a webhook URL first.';
+                return;
+            }
+            statusEl.style.color = 'var(--text-dim)';
+            statusEl.textContent = 'Sending…';
+            try {
+                await fetch(state.haWebhookUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ posture: 'test', is_good: true, elapsed_bad_s: 0, stats: {} })
+                });
+                statusEl.style.color = 'var(--success)';
+                statusEl.textContent = '✅ Webhook reached successfully!';
+            } catch (err) {
+                statusEl.style.color = 'var(--danger)';
+                statusEl.textContent = `❌ Failed: ${err.message}`;
+            }
+            setTimeout(() => statusEl.textContent = '', 4000);
+        });
+
+        // Load saved webhook settings
+        const savedHA = localStorage.getItem('posture-ha-settings');
+        if (savedHA) {
+            const parsed = JSON.parse(savedHA);
+            state.haEnabled = parsed.enabled || false;
+            state.haWebhookUrl = parsed.webhookUrl || '';
+            document.getElementById('ha-enabled').value = state.haEnabled.toString();
+            if (state.haWebhookUrl) document.getElementById('ha-webhook-url').value = state.haWebhookUrl;
+        }
+
+        // --- Persistence Logic ---
+        document.getElementById('save-local-btn').addEventListener('click', async () => {
+            if (!state.model) return alert("Train a model first!");
+            await state.model.save('localstorage://posture-model');
+            localStorage.setItem('posture-labels', JSON.stringify(state.labels));
+            localStorage.setItem('posture-dataset', JSON.stringify(state.dataset));
+            localStorage.setItem('posture-stats', JSON.stringify(state.stats));
+            alert(`Saved! Model, ${state.labels.length} labels, ${state.dataset.length} training samples, and session stats stored.`);
+        });
+
+        document.getElementById('load-local-btn').addEventListener('click', async () => {
+            try {
+                const loadedModel = await tf.loadLayersModel('localstorage://posture-model');
+                state.model = loadedModel;
+
+                const savedLabels = localStorage.getItem('posture-labels');
+                if (savedLabels) state.labels = JSON.parse(savedLabels);
+
+                const savedDataset = localStorage.getItem('posture-dataset');
+                if (savedDataset) state.dataset = JSON.parse(savedDataset);
+
+                state.isPredicting = true;
+                state.predictionOverlay.classList.add('active');
+                updateLabelsUI();
+                updateStatsUI();
+                alert(`Loaded! Model, ${state.labels.length} labels, and ${state.dataset.length} training samples restored.`);
+            } catch (err) {
+                alert("No saved model found in LocalStorage. Save one first from the Model tab.");
+                console.error(err);
+            }
+        });
+
+        document.getElementById('download-model-btn').addEventListener('click', async () => {
+            if (!state.model) return alert("Train a model first!");
+            await state.model.save('downloads://posture-model');
+        });
+
+        document.getElementById('clear-history-btn').addEventListener('click', () => {
+            state.history = [];
+            state.stats = {};
+            localStorage.removeItem('posture-history');
+            if (state.charts.trend) updateCharts();
+            updateStatsUI();
+        });
+
+        // Initialize — triggered by user click to satisfy getUserMedia gesture requirement
+        document.getElementById('start-btn').addEventListener('click', () => {
+            document.getElementById('start-overlay').style.display = 'none';
+            updateStatus('loading', 'Starting camera...');
+            // Prime AudioContext inside the user gesture so it starts in 'running' state
+            getAudioCtx();
+            setupCamera().then(initPoseDetection);
+        });
+        updateLabelsUI();
+        initChart();
+    </script>
+</body>
+
+</html>
