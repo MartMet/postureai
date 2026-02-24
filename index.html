@@ -871,11 +871,11 @@
             heatmapDayOffset: 0,  // 0 = today, -1 = yesterday, etc.
             // Alert
             alertEnabled: false,
-            alertThreshold: 30,  // seconds
             badPostureStart: null,
             lastAlertTime: null,
             alertCount: 0,
-            detectTimer: null
+            detectTimer: null,
+            lastFrameTime: Date.now()
         };
 
         // Auto-restore labels, dataset, and stats on startup
@@ -1104,14 +1104,8 @@
                 console.warn('detectLoop frame error (will retry):', err);
             }
 
-            // Smart background execution fallback:
-            // Browsers pause requestAnimationFrame when the tab is hidden.
-            // When hidden, we fall back to a 1 FPS setTimeout loop to keep writing history.
-            if (document.hidden) {
-                state.detectTimer = setTimeout(detectLoop, 1000);
-            } else {
-                state.detectTimer = requestAnimationFrame(detectLoop);
-            }
+            state.lastFrameTime = Date.now();
+            state.detectTimer = requestAnimationFrame(detectLoop);
         }
 
         // MediaPipe Pose connections (33 landmarks)
@@ -1958,21 +1952,18 @@
         updateLabelsUI();
         initChart();
 
-        // --- Background execution & chart keep-alive ---
-        // requestAnimationFrame throttles when the tab is hidden/minimised.
-        // We seamlessly switch the inference loop to a 1 FPS background heartbeat.
-        document.addEventListener('visibilitychange', () => {
-            if (document.hidden) {
-                // Tab became hidden: cancel pending rAF and start slow background loop
-                cancelAnimationFrame(state.detectTimer);
-                if (state.detector) state.detectTimer = setTimeout(detectLoop, 1000);
-            } else {
-                // Tab came back into focus: cancel slow timeout, resume fast rAF, and sync heatmap immediately
-                clearTimeout(state.detectTimer);
-                if (state.detector) state.detectTimer = requestAnimationFrame(detectLoop);
-                updateCharts();
+        // --- Background execution & watchdog ---
+        // Browsers throttle requestAnimationFrame when the tab is hidden, occluded, or blurred.
+        // This watchdog checks every second: if rAF hasn't fired in 1.5s, it forces a frame.
+        // This guarantees the AI keeps analyzing posture and writing history even in the background.
+        setInterval(() => {
+            if (Date.now() - state.lastFrameTime > 1500) {
+                // The rAF loop stalled. Force a tick to keep background inference alive.
+                if (state.detector && state.video.readyState >= 2) {
+                    detectLoop();
+                }
             }
-        });
+        }, 1000);
     </script>
 </body>
 
