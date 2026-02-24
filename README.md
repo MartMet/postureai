@@ -4,7 +4,7 @@
 
 PostureAI uses your webcam + [MediaPipe Pose](https://ai.google.dev/edge/mediapipe/solutions/vision/pose_landmarker) to detect body pose landmarks, then trains a small neural network (via [TensorFlow.js](https://www.tensorflow.org/js)) to classify your posture into any labels you define. Everything — model training, inference, history, and settings — lives in your browser's `localStorage`.
 
-![PostureAI screenshot](screenshot.png)
+🔗 **Live App:** [https://martmet.github.io/postureai/](https://martmet.github.io/postureai/)
 
 ---
 
@@ -21,15 +21,6 @@ PostureAI uses your webcam + [MediaPipe Pose](https://ai.google.dev/edge/mediapi
 - **Export / import** — save your training dataset as JSON and reload it later
 
 ---
-
-## 🚀 Deploy with GitHub Pages
-
-1. Fork or push this repo to your GitHub account
-2. Go to **Settings → Pages**
-3. Source: **Deploy from a branch** → branch `main` → folder `/ (root)`
-4. Click **Save** — your app is live at `https://YOUR_USERNAME.github.io/postureai`
-
-> The app is a single `index.html` file with no build step, so GitHub Pages serves it as-is.
 
 ---
 
@@ -85,7 +76,7 @@ postureai/
 |---|---|
 | [MediaPipe Tasks Vision](https://ai.google.dev/edge/mediapipe/solutions/vision/pose_landmarker) | Real-time pose landmark detection |
 | [TensorFlow.js](https://www.tensorflow.org/js) | Neural network training & inference |
-| [Chart.js](https://www.chartjs.org/) | Analytics charts |
+
 | Web Audio API | Alert beeps (no files needed) |
 | Notifications API | Desktop posture alerts |
 
