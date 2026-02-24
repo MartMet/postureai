@@ -867,6 +867,7 @@
             charts: { trend: null, clock: null },
             lastHistoryUpdate: 0,
             lastUpdateTime: null,
+            windowCounts: {},   // accumulated per-frame label counts since last history write
             heatmapDayOffset: 0,  // 0 = today, -1 = yesterday, etc.
             // Alert
             alertEnabled: false,
@@ -1387,6 +1388,9 @@
 
                 state.stats[smoothedLabel] = (state.stats[smoothedLabel] || 0) + delta;
 
+                // Accumulate frame count for the current window (used for accurate heatmap coloring)
+                state.windowCounts[smoothedLabel] = (state.windowCounts[smoothedLabel] || 0) + 1;
+
                 state.predictionOverlay.style.color = state.predictionColor;
 
                 // --- Bad posture alert timer (repeating + escalating) ---
@@ -1428,9 +1432,17 @@
             const now = Date.now();
             // Record snapshot every 10 seconds or when state changes
             if (now - state.lastHistoryUpdate > 10000 || label !== state.lastPrediction) {
+                // Snapshot accumulated window counts (gives heatmap true proportional data).
+                // Fall back to a single count for the current label if nothing was counted yet.
+                const counts = Object.keys(state.windowCounts).length > 0
+                    ? { ...state.windowCounts }
+                    : { [label]: 1 };
+                state.windowCounts = {}; // reset for next window
+
                 state.history.push({
                     t: now,
-                    l: label
+                    l: label,  // dominant label (kept for trend chart / streak compat)
+                    c: counts  // per-label frame counts in this window
                 });
                 state.lastHistoryUpdate = now;
 
@@ -1441,8 +1453,7 @@
                 localStorage.setItem('posture-history', JSON.stringify(state.history));
                 localStorage.setItem('posture-stats', JSON.stringify(state.stats));
 
-                if (state.charts.trend) updateCharts();
-                else updateCharts();
+                updateCharts();
             }
         }
 
@@ -1520,50 +1531,84 @@
                 state.charts.trend.update('none');
             }
 
-            // 2. Update 24×60 Day Heatmap (today only, per-minute)
+            // 2. Update 24×360 Day Heatmap (today only, per-10-seconds)
             const dayHeatmap = document.getElementById('posture-day-heatmap');
             if (dayHeatmap) {
                 const todayStr = new Date().toDateString();
                 const nowD = new Date();
                 const currentHour = nowD.getHours();
-                const currentMin = nowD.getMinutes();
+                const currentSlot = nowD.getMinutes() * 6 + Math.floor(nowD.getSeconds() / 10);
 
-                // Bin today's history into [hour][minute] buckets
+                // 360 slots per hour (6 per minute × 60 minutes)
+                const SLOTS = 360;
                 const bins = Array.from({ length: 24 }, () =>
-                    Array.from({ length: 60 }, () => ({}))
+                    Array.from({ length: SLOTS }, () => ({}))
                 );
                 state.history.forEach(h => {
                     const d = new Date(h.t);
                     if (d.toDateString() !== todayStr) return;
-                    const hr = d.getHours(), mn = d.getMinutes();
-                    bins[hr][mn][h.l] = (bins[hr][mn][h.l] || 0) + 1;
+                    const hr = d.getHours();
+                    const slot = d.getMinutes() * 6 + Math.floor(d.getSeconds() / 10);
+                    // Use per-frame counts if available (accurate), else fall back to single-label snapshot
+                    if (h.c) {
+                        Object.entries(h.c).forEach(([lbl, cnt]) => {
+                            bins[hr][slot][lbl] = (bins[hr][slot][lbl] || 0) + cnt;
+                        });
+                    } else {
+                        bins[hr][slot][h.l] = (bins[hr][slot][h.l] || 0) + 1;
+                    }
                 });
 
-                // Minute column header labels
+                // Helper: floating-mean color based on good-posture ratio in a bucket
+                // goodRatio 1.0 → green, 0.5 → yellow, 0.0 → red
+                function bucketColor(bucket) {
+                    const entries = Object.entries(bucket);
+                    if (entries.length === 0) return null;
+                    const total = entries.reduce((s, [, v]) => s + v, 0);
+                    const goodCount = entries
+                        .filter(([k]) => k.includes('good'))
+                        .reduce((s, [, v]) => s + v, 0);
+                    const ratio = goodCount / total;
+                    const hue = Math.round(ratio * 120); // 0=red, 60=yellow, 120=green
+                    const sat = 85;
+                    const lit = 42 + Math.round((1 - Math.abs(ratio - 0.5) * 2) * 8);
+                    return `hsl(${hue},${sat}%,${lit}%)`;
+                }
+
+                // Column header labels — :00, :15, :30, :45 (at slot 0, 90, 180, 270)
+                // flex proportions: 1 label + 89 spacer + 1 label + 89 spacer …
                 let html = `<div class="day-heatmap-min-labels">
                     <div class="day-heatmap-min-label" style="flex:1">:00</div>
-                    <div class="day-heatmap-min-label" style="flex:14"> </div>
+                    <div class="day-heatmap-min-label" style="flex:89"> </div>
                     <div class="day-heatmap-min-label" style="flex:1">:15</div>
-                    <div class="day-heatmap-min-label" style="flex:14"> </div>
+                    <div class="day-heatmap-min-label" style="flex:89"> </div>
                     <div class="day-heatmap-min-label" style="flex:1">:30</div>
-                    <div class="day-heatmap-min-label" style="flex:14"> </div>
+                    <div class="day-heatmap-min-label" style="flex:89"> </div>
                     <div class="day-heatmap-min-label" style="flex:1">:45</div>
-                    <div class="day-heatmap-min-label" style="flex:14"> </div>
+                    <div class="day-heatmap-min-label" style="flex:89"> </div>
                 </div>`;
 
                 for (let hr = 0; hr < 24; hr++) {
                     html += `<div class="day-row"><div class="day-row-label">${hr.toString().padStart(2, '0')}</div><div class="day-row-cells">`;
-                    for (let mn = 0; mn < 60; mn++) {
-                        const bucket = bins[hr][mn];
+                    for (let slot = 0; slot < SLOTS; slot++) {
+                        const bucket = bins[hr][slot];
                         const entries = Object.entries(bucket);
-                        const isCurrent = hr === currentHour && mn === currentMin;
+                        const isCurrent = hr === currentHour && slot === currentSlot;
+                        const color = bucketColor(bucket);
                         let bg = 'rgba(255,255,255,0.05)', opacity = '0.3';
-                        let title = `${hr.toString().padStart(2, '0')}:${mn.toString().padStart(2, '0')} — no data`;
-                        if (entries.length > 0) {
+                        // Build human-readable time label for the tooltip
+                        const mn = Math.floor(slot / 6);
+                        const sec = (slot % 6) * 10;
+                        const timeLabel = `${hr.toString().padStart(2, '0')}:${mn.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}`;
+                        let title = `${timeLabel} — no data`;
+                        if (color) {
+                            const total = entries.reduce((s, [, v]) => s + v, 0);
+                            const goodCount = entries.filter(([k]) => k.includes('good')).reduce((s, [, v]) => s + v, 0);
+                            const pct = Math.round((goodCount / total) * 100);
                             const dominant = entries.sort((a, b) => b[1] - a[1])[0][0];
-                            bg = getLabelColor(dominant);
-                            opacity = '0.85';
-                            title = `${hr.toString().padStart(2, '0')}:${mn.toString().padStart(2, '0')} — ${dominant}`;
+                            bg = color;
+                            opacity = '0.9';
+                            title = `${timeLabel} — ${pct}% good (${dominant})`;
                         }
                         html += `<div class="day-min-cell${isCurrent ? ' current-min' : ''}" style="background:${bg};opacity:${opacity};" title="${title}"></div>`;
                     }
@@ -1903,6 +1948,23 @@
         });
         updateLabelsUI();
         initChart();
+
+        // --- Background chart keep-alive ---
+        // requestAnimationFrame throttles when the tab is hidden/minimised, so the
+        // 24-hour heatmap can fall behind.  We keep it fresh with two mechanisms:
+        //   1. A per-60-second interval that rewrites the heatmap from stored history.
+        //   2. A visibilitychange listener that immediately redraws when the user
+        //      returns to the tab (catches any gaps accumulated while away).
+        setInterval(() => {
+            updateCharts();
+        }, 60 * 1000);
+
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible') {
+                // Tab came back into focus — sync heatmap immediately
+                updateCharts();
+            }
+        });
     </script>
 </body>
 
