@@ -876,17 +876,17 @@
             alertCount: 0,
             detectTimer: null,
             lastFrameTime: Date.now(),
-            version: 2 // v2 uses normalized landmarks
+            version: 3 // v3 uses Pairwise 3D Distances
         };
 
         // Auto-restore labels, dataset, and stats on startup
         (function restoreSession() {
             const savedVersion = localStorage.getItem('posture-version');
-            if (savedVersion !== '2') {
-                // Clear old v1 (absolute coordinate) data to prevent crashes
+            if (savedVersion !== '3') {
+                // Clear old data format to prevent crashes
                 ['posture-model', 'posture-dataset'].forEach(k => localStorage.removeItem(k));
-                localStorage.setItem('posture-version', '2');
-                console.log("Upgraded to v2: Cleared old absolute-coordinate dataset and model.");
+                localStorage.setItem('posture-version', '3');
+                console.log("Upgraded to v3: Cleared old dataset and model for Pairwise Distances.");
             }
 
             const savedLabels = localStorage.getItem('posture-labels');
@@ -1159,37 +1159,53 @@
         }
 
         /**
-         * Converts absolute 3D landmarks into scale- and translation-invariant relative features.
-         * Origin (0,0,0) becomes the center of the hips.
-         * Scale becomes the distance from the nose to the hip-center (torso length).
+         * Strategy 2: Pairwise 3D Distances
+         * Extracts the distance between key upper-body landmarks.
+         * Distances between points never change when you rotate a 3D object,
+         * making this immune to diagonal camera angles and perspective changes.
+         * The distances are then divided by torso-length for scale immunity.
          */
-        function normalizeLandmarks(landmarks) {
+        function extractPairwiseDistances(landmarks) {
             if (!landmarks || landmarks.length < 33) return [];
 
+            // 1. Select key upper-body landmarks that define posture
+            const keyIndices = [
+                0,        // Nose
+                7, 8,     // Left/Right Ears (head tilt)
+                11, 12,   // Left/Right Shoulders
+                13, 14,   // Left/Right Elbows (armrest leaning)
+                23, 24    // Left/Right Hips (base)
+            ];
+
+            const points = keyIndices.map(i => landmarks[i]);
+
+            // 2. Find Scale (Distance from nose to hip-center) to prevent moving closer/further from breaking it
             const nose = landmarks[0];
             const leftHip = landmarks[23];
             const rightHip = landmarks[24];
-
-            // 1. Find Center (Midpoint of hips)
             const centerX = (leftHip.x + rightHip.x) / 2;
             const centerY = (leftHip.y + rightHip.y) / 2;
             const centerZ = ((leftHip.z || 0) + (rightHip.z || 0)) / 2;
-
-            // 2. Find Scale (Distance from nose to hip-center)
             const dx = nose.x - centerX;
             const dy = nose.y - centerY;
             const dz = (nose.z || 0) - centerZ;
-            const scale = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1; // fallback to 1 to avoid div-by-zero
+            const scale = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
 
-            // 3. Normalize all points
-            const flattened = [];
-            landmarks.forEach(lm => {
-                flattened.push((lm.x - centerX) / scale);
-                flattened.push((lm.y - centerY) / scale);
-                flattened.push(((lm.z || 0) - centerZ) / scale);
-            });
+            // 3. Calculate all pairwise 3D distances between the key points
+            const features = [];
+            for (let i = 0; i < points.length; i++) {
+                for (let j = i + 1; j < points.length; j++) {
+                    const p1 = points[i];
+                    const p2 = points[j];
+                    const distX = p1.x - p2.x;
+                    const distY = p1.y - p2.y;
+                    const distZ = (p1.z || 0) - (p2.z || 0);
+                    const dist = Math.sqrt(distX * distX + distY * distY + distZ * distZ);
+                    features.push(dist / scale);
+                }
+            }
 
-            return flattened;
+            return features;
         }
 
         // --- Data Collection Logic ---
@@ -1253,13 +1269,13 @@
             if (!state.currentKeypoints) return;
             if (!targetLabel) return;
 
-            // Use scale- and translation-invariant features
-            const flattened = normalizeLandmarks(state.currentKeypoints);
-            if (flattened.length === 0) return;
+            // Use scale- and 3D-rotation invariant features
+            const features = extractPairwiseDistances(state.currentKeypoints);
+            if (features.length === 0) return;
 
             state.dataset.push({
                 label: targetLabel,
-                data: flattened
+                data: features
             });
             updateLabelsUI();
         }
@@ -1384,10 +1400,10 @@
             if (!state.model || state.isTraining) return;
 
             tf.tidy(() => {
-                const flattened = normalizeLandmarks(landmarks);
-                if (flattened.length === 0) return;
+                const features = extractPairwiseDistances(landmarks);
+                if (features.length === 0) return;
 
-                const input = tf.tensor2d([flattened]);
+                const input = tf.tensor2d([features]);
                 const prediction = state.model.predict(input);
                 const scores = prediction.dataSync();
                 const maxIndex = prediction.argMax(1).dataSync()[0];
