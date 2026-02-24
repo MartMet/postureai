@@ -876,17 +876,17 @@
             alertCount: 0,
             detectTimer: null,
             lastFrameTime: Date.now(),
-            version: 3 // v3 uses Pairwise 3D Distances
+            version: 4 // v4 uses Local Geometric Angles
         };
 
         // Auto-restore labels, dataset, and stats on startup
         (function restoreSession() {
             const savedVersion = localStorage.getItem('posture-version');
-            if (savedVersion !== '3') {
+            if (savedVersion !== '4') {
                 // Clear old data format to prevent crashes
                 ['posture-model', 'posture-dataset'].forEach(k => localStorage.removeItem(k));
-                localStorage.setItem('posture-version', '3');
-                console.log("Upgraded to v3: Cleared old dataset and model for Pairwise Distances.");
+                localStorage.setItem('posture-version', '4');
+                console.log("Upgraded to v4: Cleared old dataset and model for Geometric Angles.");
             }
 
             const savedLabels = localStorage.getItem('posture-labels');
@@ -1138,13 +1138,10 @@
             const W = state.canvas.width;
             const H = state.canvas.height;
 
-            // The 9 key landmarks the AI uses for Pairwise Distances
-            const keyIndices = [0, 7, 8, 11, 12, 13, 14, 23, 24];
-
-            // 1. Draw normal MediaPipe connections (faded into background)
+            // 1. Draw normal MediaPipe connections (highly faded)
             ctx.strokeStyle = 'white';
-            ctx.lineWidth = 2;
-            ctx.globalAlpha = 0.15;
+            ctx.lineWidth = 1.5;
+            ctx.globalAlpha = 0.1;
             MP_CONNECTIONS.forEach(([i, j]) => {
                 const a = landmarks[i];
                 const b = landmarks[j];
@@ -1156,88 +1153,120 @@
             });
             ctx.globalAlpha = 1.0;
 
-            // 2. Draw the AI "Vision Web" (The 36 pairwise distances)
-            ctx.globalAlpha = 0.5;
-            ctx.strokeStyle = '#00ffff'; // bright pure cyan
-            ctx.lineWidth = 2.5;         // thicker lines
-            for (let i = 0; i < keyIndices.length; i++) {
-                for (let j = i + 1; j < keyIndices.length; j++) {
-                    const a = landmarks[keyIndices[i]];
-                    const b = landmarks[keyIndices[j]];
-                    if (!a || !b || (a.visibility ?? 1) < 0.3 || (b.visibility ?? 1) < 0.3) continue;
-                    ctx.beginPath();
-                    ctx.moveTo(W - a.x * W, a.y * H);
-                    ctx.lineTo(W - b.x * W, b.y * H);
-                    ctx.stroke();
-                }
+            // Helpers for drawing vectors
+            const midShoulder = { x: (landmarks[11].x + landmarks[12].x) / 2, y: (landmarks[11].y + landmarks[12].y) / 2 };
+            const midHip = { x: (landmarks[23].x + landmarks[24].x) / 2, y: (landmarks[23].y + landmarks[24].y) / 2 };
+            const midEar = { x: (landmarks[7].x + landmarks[8].x) / 2, y: (landmarks[7].y + landmarks[8].y) / 2 };
+
+            function drawVectorLine(p1, p2, thickness = 3, forceColor = color) {
+                if (!p1 || !p2) return;
+                ctx.beginPath();
+                ctx.moveTo(W - p1.x * W, p1.y * H);
+                ctx.lineTo(W - p2.x * W, p2.y * H);
+                ctx.strokeStyle = forceColor;
+                ctx.lineWidth = thickness;
+                ctx.stroke();
             }
+
+            // 2. Draw the Core Geometric Vectors (The AI's actual inputs)
+            ctx.globalAlpha = 0.8;
+            drawVectorLine(midHip, midShoulder, 4);           // Spine
+            drawVectorLine(midShoulder, midEar, 4);           // Neck
+            drawVectorLine(midEar, landmarks[0], 3);          // Face
+            drawVectorLine(landmarks[11], landmarks[12], 4);  // Shoulders
+            drawVectorLine(landmarks[23], landmarks[24], 4);  // Hips
+            drawVectorLine(landmarks[11], landmarks[13], 2);  // Left Arm
+            drawVectorLine(landmarks[12], landmarks[14], 2);  // Right Arm
             ctx.globalAlpha = 1.0;
 
-            // 3. Draw landmarks (highlight the 9 key ones, fade the 24 discarded ones)
-            landmarks.forEach((lm, index) => {
-                if ((lm.visibility ?? 1) < 0.3) return;
-                const isKeyPoint = keyIndices.includes(index);
-
+            // 3. Draw key nodes
+            const keyNodes = [
+                midHip, midShoulder, midEar, landmarks[0], // Centers & Nose
+                landmarks[11], landmarks[12], landmarks[13], landmarks[14], // Shoulders, Elbows
+                landmarks[23], landmarks[24] // Hips
+            ];
+            keyNodes.forEach(lm => {
+                if (!lm) return;
                 ctx.beginPath();
-                ctx.arc(W - lm.x * W, lm.y * H, isKeyPoint ? 7 : 2, 0, 2 * Math.PI); // much larger keypoint
-                ctx.fillStyle = isKeyPoint ? color : 'rgba(255, 255, 255, 0.3)';
+                ctx.arc(W - lm.x * W, lm.y * H, Math.random() < 0 ? 5 : 4, 0, 2 * Math.PI); // wait no random
+                ctx.fillStyle = color;
                 ctx.fill();
-
-                if (isKeyPoint) {
-                    ctx.strokeStyle = '#000';
-                    ctx.lineWidth = 2;
-                    ctx.stroke();
-                }
+                ctx.strokeStyle = '#000';
+                ctx.lineWidth = 1;
+                ctx.stroke();
             });
         }
 
         /**
-         * Strategy 2: Pairwise 3D Distances
-         * Extracts the distance between key upper-body landmarks.
-         * Distances between points never change when you rotate a 3D object,
-         * making this immune to diagonal camera angles and perspective changes.
-         * The distances are then divided by torso-length for scale immunity.
+         * Strategy 3: Geometric Angles + Local Coordinate Projection
+         * Creates a 3D compass affixed to the user's upper chest.
+         * Extracts 7 core skeletal vectors (Spine, Neck, Face, Arms) and projects
+         * them into this compass. This makes the features perfectly immune to diagonal
+         * camera angles (Yaw), while retaining deterministic Forward/Back/Left/Right directions.
          */
-        function extractPairwiseDistances(landmarks) {
+        function extractGeometricAngles(landmarks) {
             if (!landmarks || landmarks.length < 33) return [];
 
-            // 1. Select key upper-body landmarks that define posture
-            const keyIndices = [
-                0,        // Nose
-                7, 8,     // Left/Right Ears (head tilt)
-                11, 12,   // Left/Right Shoulders
-                13, 14,   // Left/Right Elbows (armrest leaning)
-                23, 24    // Left/Right Hips (base)
-            ];
-
-            const points = keyIndices.map(i => landmarks[i]);
-
-            // 2. Find Scale (Distance from nose to hip-center) to prevent moving closer/further from breaking it
-            const nose = landmarks[0];
-            const leftHip = landmarks[23];
-            const rightHip = landmarks[24];
-            const centerX = (leftHip.x + rightHip.x) / 2;
-            const centerY = (leftHip.y + rightHip.y) / 2;
-            const centerZ = ((leftHip.z || 0) + (rightHip.z || 0)) / 2;
-            const dx = nose.x - centerX;
-            const dy = nose.y - centerY;
-            const dz = (nose.z || 0) - centerZ;
-            const scale = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
-
-            // 3. Calculate all pairwise 3D distances between the key points
-            const features = [];
-            for (let i = 0; i < points.length; i++) {
-                for (let j = i + 1; j < points.length; j++) {
-                    const p1 = points[i];
-                    const p2 = points[j];
-                    const distX = p1.x - p2.x;
-                    const distY = p1.y - p2.y;
-                    const distZ = (p1.z || 0) - (p2.z || 0);
-                    const dist = Math.sqrt(distX * distX + distY * distY + distZ * distZ);
-                    features.push(dist / scale);
-                }
+            function vec(p1, p2) {
+                return { x: p2.x - p1.x, y: p2.y - p1.y, z: (p2.z || 0) - (p1.z || 0) };
+            }
+            function dot(v1, v2) {
+                return v1.x * v2.x + v1.y * v2.y + v1.z * v2.z;
+            }
+            function mag(v) {
+                return Math.sqrt(dot(v, v)) || 1;
+            }
+            function norm(v) {
+                const m = mag(v);
+                return { x: v.x / m, y: v.y / m, z: v.z / m };
             }
 
+            // 1. Establish Local Coordinate System (Camera-Yaw Independent Compass)
+            const localY = { x: 0, y: -1, z: 0 }; // Global UP
+
+            // Local X (Right): Flat projection of shoulders
+            const rawShoulders = vec(landmarks[11], landmarks[12]);
+            let localX = norm({ x: rawShoulders.x, y: 0, z: rawShoulders.z });
+            if (Number.isNaN(localX.x) || (localX.x === 0 && localX.z === 0)) localX = { x: 1, y: 0, z: 0 };
+
+            // Local Z (Forward): Deep 3D Cross Product
+            const localZ = norm({
+                x: localX.y * localY.z - localX.z * localY.y,
+                y: localX.z * localY.x - localX.x * localY.z,
+                z: localX.x * localY.y - localX.y * localY.x
+            });
+
+            function project(v) {
+                const vn = norm(v);
+                return [dot(vn, localX), dot(vn, localY), dot(vn, localZ)];
+            }
+
+            const midShoulder = {
+                x: (landmarks[11].x + landmarks[12].x) / 2,
+                y: (landmarks[11].y + landmarks[12].y) / 2,
+                z: ((landmarks[11].z || 0) + (landmarks[12].z || 0)) / 2
+            };
+            const midHip = {
+                x: (landmarks[23].x + landmarks[24].x) / 2,
+                y: (landmarks[23].y + landmarks[24].y) / 2,
+                z: ((landmarks[23].z || 0) + (landmarks[24].z || 0)) / 2
+            };
+            const midEar = {
+                x: (landmarks[7].x + landmarks[8].x) / 2,
+                y: (landmarks[7].y + landmarks[8].y) / 2,
+                z: ((landmarks[7].z || 0) + (landmarks[8].z || 0)) / 2
+            };
+
+            const features = [];
+            features.push(...project(vec(midHip, midShoulder)));    // Spine pitch/roll
+            features.push(...project(vec(midShoulder, midEar)));    // Neck pitch/roll
+            features.push(...project(vec(midEar, landmarks[0])));   // Face direction
+            features.push(...project(rawShoulders));                // Shoulder tilt
+            features.push(...project(vec(landmarks[23], landmarks[24]))); // Hip tilt
+            features.push(...project(vec(landmarks[11], landmarks[13]))); // Left Arm
+            features.push(...project(vec(landmarks[12], landmarks[14]))); // Right Arm
+
+            // 7 vectors * 3 dimensions = 21 features
             return features;
         }
 
@@ -1302,8 +1331,8 @@
             if (!state.currentKeypoints) return;
             if (!targetLabel) return;
 
-            // Use scale- and 3D-rotation invariant features
-            const features = extractPairwiseDistances(state.currentKeypoints);
+            // Use highly resilient Geometric Angles
+            const features = extractGeometricAngles(state.currentKeypoints);
             if (features.length === 0) return;
 
             state.dataset.push({
@@ -1433,7 +1462,7 @@
             if (!state.model || state.isTraining) return;
 
             tf.tidy(() => {
-                const features = extractPairwiseDistances(landmarks);
+                const features = extractGeometricAngles(landmarks);
                 if (features.length === 0) return;
 
                 const input = tf.tensor2d([features]);
