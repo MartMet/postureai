@@ -876,17 +876,17 @@
             alertCount: 0,
             detectTimer: null,
             lastFrameTime: Date.now(),
-            version: 4 // v4 uses Local Geometric Angles
+            version: 5 // v5 uses Upper Body Triangle (Hips ignored)
         };
 
         // Auto-restore labels, dataset, and stats on startup
         (function restoreSession() {
             const savedVersion = localStorage.getItem('posture-version');
-            if (savedVersion !== '4') {
+            if (savedVersion !== '5') {
                 // Clear old data format to prevent crashes
                 ['posture-model', 'posture-dataset'].forEach(k => localStorage.removeItem(k));
-                localStorage.setItem('posture-version', '4');
-                console.log("Upgraded to v4: Cleared old dataset and model for Geometric Angles.");
+                localStorage.setItem('posture-version', '5');
+                console.log("Upgraded to v5: Cleared old dataset for Upper Body Triangle update.");
             }
 
             const savedLabels = localStorage.getItem('posture-labels');
@@ -1331,8 +1331,8 @@
             if (!state.currentKeypoints) return;
             if (!targetLabel) return;
 
-            // Use highly resilient Geometric Angles
-            const features = extractGeometricAngles(state.currentKeypoints);
+            // Use Upper Body Triangle features
+            const features = extractUpperBodyFeatures(state.currentKeypoints);
             if (features.length === 0) return;
 
             state.dataset.push({
@@ -1462,7 +1462,7 @@
             if (!state.model || state.isTraining) return;
 
             tf.tidy(() => {
-                const features = extractGeometricAngles(landmarks);
+                const features = extractUpperBodyFeatures(landmarks);
                 if (features.length === 0) return;
 
                 const input = tf.tensor2d([features]);
