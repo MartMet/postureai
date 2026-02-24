@@ -1594,57 +1594,6 @@
             }
         }
 
-        function initChart() {
-            const trendCtx = document.getElementById('postureChart');
-            if (!trendCtx) return; // Charts might be removed but calls remain
-
-            state.charts.trend = new Chart(trendCtx.getContext('2d'), {
-                type: 'line',
-                data: { datasets: [] },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    scales: {
-                        x: {
-                            type: 'linear',
-                            title: { display: false },
-                            grid: { color: 'rgba(255,255,255,0.05)' },
-                            ticks: {
-                                color: '#94a3b8',
-                                font: { size: 9 },
-                                callback: function (value) {
-                                    return new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-                                }
-                            }
-                        },
-                        y: {
-                            grid: { color: 'rgba(255,255,255,0.05)' },
-                            ticks: {
-                                font: { size: 9 },
-                                callback: (v) => state.labels[v] || '',
-                                stepSize: 1,
-                                color: '#94a3b8'
-                            }
-                        }
-                    },
-                    plugins: {
-                        legend: { display: false },
-                        tooltip: {
-                            callbacks: {
-                                title: (items) => new Date(items[0].raw.x).toLocaleString(),
-                                label: (item) => `Posture: ${state.labels[item.raw.y]}`
-                            }
-                        },
-                        zoom: {
-                            pan: { enabled: true, mode: 'x' },
-                            zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'x' }
-                        }
-                    }
-                }
-            });
-
-            if (state.history.length > 0) updateCharts();
-        }
 
         function updateCharts() {
             // CRITICAL PERFORMANCE FIX: 
@@ -1654,24 +1603,6 @@
 
             const now = Date.now();
 
-            // 1. Update Trend Chart if it exists
-            if (state.charts.trend) {
-                const trendData = state.history.map(h => ({
-                    x: h.t,
-                    y: state.labels.indexOf(h.l)
-                }));
-
-                state.charts.trend.data.datasets = [{
-                    data: trendData,
-                    borderColor: 'var(--accent-color)',
-                    backgroundColor: 'rgba(56, 189, 248, 0.1)',
-                    borderWidth: 2,
-                    pointRadius: 0,
-                    fill: true,
-                    stepped: true
-                }];
-                state.charts.trend.update('none');
-            }
 
             // 2. Update 24×360 Day Heatmap (today only, per-10-seconds)
             const dayHeatmap = document.getElementById('posture-day-heatmap');
@@ -1794,95 +1725,7 @@
             if (scoreEl) scoreEl.innerText = score;
         }
 
-        function drawAvgAvatar(health) {
-            const canvas = document.getElementById('avgPostureCanvas');
-            if (!canvas) return;
-            const ctx = canvas.getContext('2d');
-            const w = canvas.width = canvas.offsetWidth;
-            const h = canvas.height = canvas.offsetHeight;
-            ctx.clearRect(0, 0, w, h);
 
-            const centerX = w / 2;
-            const lean = (1 - health) * 20;
-
-            ctx.strokeStyle = '#94a3b8';
-            ctx.shadowBlur = 10;
-            ctx.shadowColor = health > 0.7 ? '#22c55e' : '#ef4444';
-            ctx.lineWidth = 4;
-            ctx.lineCap = 'round';
-
-            // Head
-            ctx.beginPath();
-            ctx.arc(centerX + lean, 30, 8, 0, Math.PI * 2);
-            ctx.stroke();
-
-            // Spine
-            ctx.beginPath();
-            ctx.moveTo(centerX + lean, 38);
-            ctx.bezierCurveTo(centerX + lean, 60, centerX, 70, centerX, 120);
-            ctx.stroke();
-
-            // Shoulders
-            ctx.lineWidth = 2;
-            ctx.beginPath();
-            ctx.moveTo(centerX + lean - 15, 45);
-            ctx.lineTo(centerX + lean + 15, 45);
-            ctx.stroke();
-        }
-
-        function showHourDetail(dayHistory, hour) {
-            const detail = document.getElementById('heatmap-detail');
-            if (!detail) return;
-
-            const hrStr = hour.toString().padStart(2, '0');
-            const entries = dayHistory.filter(h => new Date(h.t).getHours() === hour);
-
-            // Build 60 per-minute buckets
-            const minBuckets = Array.from({ length: 60 }, () => ({}));
-            entries.forEach(h => {
-                const min = new Date(h.t).getMinutes();
-                minBuckets[min][h.l] = (minBuckets[min][h.l] || 0) + 1;
-            });
-
-            // Render mini heatmap header + 60 cells
-            let html = `<div style="color:var(--accent-color);font-weight:600;margin-bottom:6px;font-size:0.75rem;">${hrStr}:00 — ${hrStr}:59</div>
-                <div style="display:grid;grid-template-columns:repeat(60,1fr);gap:2px;width:100%;">`;
-
-            for (let min = 0; min < 60; min++) {
-                const bucket = minBuckets[min];
-                const bucketEntries = Object.entries(bucket);
-                let bg = 'rgba(255,255,255,0.07)';
-                let opacity = '0.3';
-                let title = `${hrStr}:${min.toString().padStart(2, '0')} — no data`;
-
-                if (bucketEntries.length > 0) {
-                    const dominant = bucketEntries.sort((a, b) => b[1] - a[1])[0][0];
-                    bg = dominant.includes('good') ? '#22c55e' : (dominant.includes('bad') || dominant.includes('slouch') ? '#ef4444' : '#38bdf8');
-                    opacity = '0.85';
-                    title = `${hrStr}:${min.toString().padStart(2, '0')} — ${dominant}`;
-                }
-
-                html += `<div title="${title}" style="height:20px;border-radius:2px;background:${bg};opacity:${opacity};"></div>`;
-            }
-
-            html += `</div><div style="display:flex;justify-content:space-between;font-size:0.55rem;color:var(--text-dim);margin-top:2px;"><span>:00</span><span>:15</span><span>:30</span><span>:45</span><span>:59</span></div>`;
-            detail.innerHTML = html;
-        }
-
-        // Day navigator buttons (guard against elements not existing after heatmap redesign)
-        document.getElementById('heatmap-prev')?.addEventListener('click', () => {
-            state.heatmapDayOffset--;
-            document.getElementById('heatmap-detail').innerHTML = '';
-            updateCharts();
-        });
-
-        document.getElementById('heatmap-next')?.addEventListener('click', () => {
-            if (state.heatmapDayOffset < 0) {
-                state.heatmapDayOffset++;
-                document.getElementById('heatmap-detail').innerHTML = '';
-                updateCharts();
-            }
-        });
 
         // --- Reset / Clear buttons ---
         document.getElementById('clear-collection-btn').addEventListener('click', () => {
@@ -2076,7 +1919,7 @@
             state.history = [];
             state.stats = {};
             localStorage.removeItem('posture-history');
-            if (state.charts.trend) updateCharts();
+            updateCharts();
             updateStatsUI();
         });
 
@@ -2089,7 +1932,6 @@
             setupCamera().then(initPoseDetection);
         });
         updateLabelsUI();
-        initChart();
 
         // --- Background execution & watchdog ---
         // Browsers throttle requestAnimationFrame when the tab is hidden, occluded, or blurred.
