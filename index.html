@@ -1596,6 +1596,11 @@
         }
 
         function updateCharts() {
+            // CRITICAL PERFORMANCE FIX: 
+            // Do not thrash the DOM (creating 8,600+ heatmap divs) if the browser tab is hidden!
+            // The data is safely saved in state.history. It will render the moment you return.
+            if (document.hidden) return;
+
             const now = Date.now();
 
             // 1. Update Trend Chart if it exists
