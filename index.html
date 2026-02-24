@@ -1208,7 +1208,7 @@
 
             const lShoulder = landmarks[11];
             const rShoulder = landmarks[12];
-            
+
             // Origin: center of the collarbone
             const origin = {
                 x: (lShoulder.x + rShoulder.x) / 2,
@@ -1238,7 +1238,7 @@
 
             // --- The Local Coordinate Compass ---
             const localY = { x: 0, y: -1, z: 0 }; // Global UP (Camera Y axis)
-            
+
             // Local X (Right): Flat projection of shoulders
             const rawShoulders = vec(lShoulder, rShoulder);
             let localX = norm({ x: rawShoulders.x, y: 0, z: rawShoulders.z });
@@ -1268,7 +1268,7 @@
             }
 
             const features = [];
-            
+
             // The precise points that dictate Head/Neck posture
             const keyIndices = [
                 0,    // Nose (Forward head posture)
@@ -1355,6 +1355,13 @@
                 data: features
             });
             updateLabelsUI();
+
+            // Auto-Retrain: If we are already predicting, correct the AI instantly
+            if (state.isPredicting && !state.isTraining && state.dataset.length >= 5) {
+                updateStatus('loading', 'Auto-training...');
+                // Slight delay to allow UI to update the +1 counter before UI thread freezes
+                setTimeout(trainModel, 50);
+            }
         }
 
         document.getElementById('add-label-btn').addEventListener('click', () => {
@@ -2110,4 +2117,3 @@
 </body>
 
 </html>
-
