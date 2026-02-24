@@ -875,11 +875,20 @@
             lastAlertTime: null,
             alertCount: 0,
             detectTimer: null,
-            lastFrameTime: Date.now()
+            lastFrameTime: Date.now(),
+            version: 2 // v2 uses normalized landmarks
         };
 
         // Auto-restore labels, dataset, and stats on startup
         (function restoreSession() {
+            const savedVersion = localStorage.getItem('posture-version');
+            if (savedVersion !== '2') {
+                // Clear old v1 (absolute coordinate) data to prevent crashes
+                ['posture-model', 'posture-dataset'].forEach(k => localStorage.removeItem(k));
+                localStorage.setItem('posture-version', '2');
+                console.log("Upgraded to v2: Cleared old absolute-coordinate dataset and model.");
+            }
+
             const savedLabels = localStorage.getItem('posture-labels');
             const savedDataset = localStorage.getItem('posture-dataset');
             const savedStats = localStorage.getItem('posture-stats');
@@ -1149,6 +1158,40 @@
             });
         }
 
+        /**
+         * Converts absolute 3D landmarks into scale- and translation-invariant relative features.
+         * Origin (0,0,0) becomes the center of the hips.
+         * Scale becomes the distance from the nose to the hip-center (torso length).
+         */
+        function normalizeLandmarks(landmarks) {
+            if (!landmarks || landmarks.length < 33) return [];
+
+            const nose = landmarks[0];
+            const leftHip = landmarks[23];
+            const rightHip = landmarks[24];
+
+            // 1. Find Center (Midpoint of hips)
+            const centerX = (leftHip.x + rightHip.x) / 2;
+            const centerY = (leftHip.y + rightHip.y) / 2;
+            const centerZ = ((leftHip.z || 0) + (rightHip.z || 0)) / 2;
+
+            // 2. Find Scale (Distance from nose to hip-center)
+            const dx = nose.x - centerX;
+            const dy = nose.y - centerY;
+            const dz = (nose.z || 0) - centerZ;
+            const scale = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1; // fallback to 1 to avoid div-by-zero
+
+            // 3. Normalize all points
+            const flattened = [];
+            landmarks.forEach(lm => {
+                flattened.push((lm.x - centerX) / scale);
+                flattened.push((lm.y - centerY) / scale);
+                flattened.push(((lm.z || 0) - centerZ) / scale);
+            });
+
+            return flattened;
+        }
+
         // --- Data Collection Logic ---
         function updateLabelsUI() {
             const container = document.getElementById('label-tags-container');
@@ -1210,13 +1253,9 @@
             if (!state.currentKeypoints) return;
             if (!targetLabel) return;
 
-            // MediaPipe landmarks are already normalized (x, y, z in 0-1 / relative range)
-            const flattened = [];
-            state.currentKeypoints.forEach(lm => {
-                flattened.push(lm.x);
-                flattened.push(lm.y);
-                flattened.push(lm.z ?? 0);
-            });
+            // Use scale- and translation-invariant features
+            const flattened = normalizeLandmarks(state.currentKeypoints);
+            if (flattened.length === 0) return;
 
             state.dataset.push({
                 label: targetLabel,
@@ -1345,13 +1384,8 @@
             if (!state.model || state.isTraining) return;
 
             tf.tidy(() => {
-                // MediaPipe landmarks already normalized (x, y, z in 0-1 range)
-                const flattened = [];
-                landmarks.forEach(lm => {
-                    flattened.push(lm.x);
-                    flattened.push(lm.y);
-                    flattened.push(lm.z ?? 0);
-                });
+                const flattened = normalizeLandmarks(landmarks);
+                if (flattened.length === 0) return;
 
                 const input = tf.tensor2d([flattened]);
                 const prediction = state.model.predict(input);
