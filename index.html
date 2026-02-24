@@ -1198,14 +1198,29 @@
         }
 
         /**
-         * Strategy 3: Geometric Angles + Local Coordinate Projection
-         * Creates a 3D compass affixed to the user's upper chest.
-         * Extracts 7 core skeletal vectors (Spine, Neck, Face, Arms) and projects
-         * them into this compass. This makes the features perfectly immune to diagonal
-         * camera angles (Yaw), while retaining deterministic Forward/Back/Left/Right directions.
+         * Strategy 5: Upper Body Triangle + Local Coordinate Compass
+         * Ignores the hips to prevent "Desk Illusion" jitter.
+         * Anchors a 3D compass to the collarbone (immune to camera rotation/yaw).
+         * Extracts the Nose, Eyes, Ears, and Shoulders projected into this compass.
          */
-        function extractGeometricAngles(landmarks) {
+        function extractUpperBodyFeatures(landmarks) {
             if (!landmarks || landmarks.length < 33) return [];
+
+            const lShoulder = landmarks[11];
+            const rShoulder = landmarks[12];
+            
+            // Origin: center of the collarbone
+            const origin = {
+                x: (lShoulder.x + rShoulder.x) / 2,
+                y: (lShoulder.y + rShoulder.y) / 2,
+                z: ((lShoulder.z || 0) + (rShoulder.z || 0)) / 2
+            };
+
+            // Scale: physical shoulder width
+            const dx = lShoulder.x - rShoulder.x;
+            const dy = lShoulder.y - rShoulder.y;
+            const dz = (lShoulder.z || 0) - (rShoulder.z || 0);
+            const scale = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
 
             function vec(p1, p2) {
                 return { x: p2.x - p1.x, y: p2.y - p1.y, z: (p2.z || 0) - (p1.z || 0) };
@@ -1221,11 +1236,11 @@
                 return { x: v.x / m, y: v.y / m, z: v.z / m };
             }
 
-            // 1. Establish Local Coordinate System (Camera-Yaw Independent Compass)
-            const localY = { x: 0, y: -1, z: 0 }; // Global UP
-
+            // --- The Local Coordinate Compass ---
+            const localY = { x: 0, y: -1, z: 0 }; // Global UP (Camera Y axis)
+            
             // Local X (Right): Flat projection of shoulders
-            const rawShoulders = vec(landmarks[11], landmarks[12]);
+            const rawShoulders = vec(lShoulder, rShoulder);
             let localX = norm({ x: rawShoulders.x, y: 0, z: rawShoulders.z });
             if (Number.isNaN(localX.x) || (localX.x === 0 && localX.z === 0)) localX = { x: 1, y: 0, z: 0 };
 
@@ -1236,37 +1251,37 @@
                 z: localX.x * localY.y - localX.y * localY.x
             });
 
-            function project(v) {
-                const vn = norm(v);
-                return [dot(vn, localX), dot(vn, localY), dot(vn, localZ)];
+            // Project any 3D vector into the Compass space
+            function projectPoint(pt) {
+                // First: Normalize translation and scale
+                const v = {
+                    x: (pt.x - origin.x) / scale,
+                    y: (pt.y - origin.y) / scale,
+                    z: ((pt.z || 0) - origin.z) / scale
+                };
+                // Second: Normalize rotation (Project to Local X/Y/Z)
+                return [
+                    dot(v, localX), // Left/Right relative to chest
+                    dot(v, localY), // Up/Down relative to gravity
+                    dot(v, localZ)  // Forward/Back relative to chest
+                ];
             }
 
-            const midShoulder = {
-                x: (landmarks[11].x + landmarks[12].x) / 2,
-                y: (landmarks[11].y + landmarks[12].y) / 2,
-                z: ((landmarks[11].z || 0) + (landmarks[12].z || 0)) / 2
-            };
-            const midHip = {
-                x: (landmarks[23].x + landmarks[24].x) / 2,
-                y: (landmarks[23].y + landmarks[24].y) / 2,
-                z: ((landmarks[23].z || 0) + (landmarks[24].z || 0)) / 2
-            };
-            const midEar = {
-                x: (landmarks[7].x + landmarks[8].x) / 2,
-                y: (landmarks[7].y + landmarks[8].y) / 2,
-                z: ((landmarks[7].z || 0) + (landmarks[8].z || 0)) / 2
-            };
-
             const features = [];
-            features.push(...project(vec(midHip, midShoulder)));    // Spine pitch/roll
-            features.push(...project(vec(midShoulder, midEar)));    // Neck pitch/roll
-            features.push(...project(vec(midEar, landmarks[0])));   // Face direction
-            features.push(...project(rawShoulders));                // Shoulder tilt
-            features.push(...project(vec(landmarks[23], landmarks[24]))); // Hip tilt
-            features.push(...project(vec(landmarks[11], landmarks[13]))); // Left Arm
-            features.push(...project(vec(landmarks[12], landmarks[14]))); // Right Arm
+            
+            // The precise points that dictate Head/Neck posture
+            const keyIndices = [
+                0,    // Nose (Forward head posture)
+                1, 4, // Left/Right Eyes (Pitch/Roll)
+                7, 8, // Left/Right Ears (Yaw/Roll)
+                11, 12 // Shoulders (Baseline)
+            ];
 
-            // 7 vectors * 3 dimensions = 21 features
+            // 1. Normalized & Compass-Projected 3D Coordinates (21 features)
+            keyIndices.forEach(i => {
+                features.push(...projectPoint(landmarks[i]));
+            });
+
             return features;
         }
 
