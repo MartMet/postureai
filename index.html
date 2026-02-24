@@ -874,7 +874,8 @@
             alertThreshold: 30,  // seconds
             badPostureStart: null,
             lastAlertTime: null,
-            alertCount: 0
+            alertCount: 0,
+            detectTimer: null
         };
 
         // Auto-restore labels, dataset, and stats on startup
@@ -1102,7 +1103,15 @@
             } catch (err) {
                 console.warn('detectLoop frame error (will retry):', err);
             }
-            requestAnimationFrame(detectLoop);
+
+            // Smart background execution fallback:
+            // Browsers pause requestAnimationFrame when the tab is hidden.
+            // When hidden, we fall back to a 1 FPS setTimeout loop to keep writing history.
+            if (document.hidden) {
+                state.detectTimer = setTimeout(detectLoop, 1000);
+            } else {
+                state.detectTimer = requestAnimationFrame(detectLoop);
+            }
         }
 
         // MediaPipe Pose connections (33 landmarks)
@@ -1949,19 +1958,18 @@
         updateLabelsUI();
         initChart();
 
-        // --- Background chart keep-alive ---
-        // requestAnimationFrame throttles when the tab is hidden/minimised, so the
-        // 24-hour heatmap can fall behind.  We keep it fresh with two mechanisms:
-        //   1. A per-60-second interval that rewrites the heatmap from stored history.
-        //   2. A visibilitychange listener that immediately redraws when the user
-        //      returns to the tab (catches any gaps accumulated while away).
-        setInterval(() => {
-            updateCharts();
-        }, 60 * 1000);
-
+        // --- Background execution & chart keep-alive ---
+        // requestAnimationFrame throttles when the tab is hidden/minimised.
+        // We seamlessly switch the inference loop to a 1 FPS background heartbeat.
         document.addEventListener('visibilitychange', () => {
-            if (document.visibilityState === 'visible') {
-                // Tab came back into focus — sync heatmap immediately
+            if (document.hidden) {
+                // Tab became hidden: cancel pending rAF and start slow background loop
+                cancelAnimationFrame(state.detectTimer);
+                if (state.detector) state.detectTimer = setTimeout(detectLoop, 1000);
+            } else {
+                // Tab came back into focus: cancel slow timeout, resume fast rAF, and sync heatmap immediately
+                clearTimeout(state.detectTimer);
+                if (state.detector) state.detectTimer = requestAnimationFrame(detectLoop);
                 updateCharts();
             }
         });
