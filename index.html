@@ -1131,30 +1131,56 @@
             const W = state.canvas.width;
             const H = state.canvas.height;
 
-            // Draw connections
+            // The 9 key landmarks the AI uses for Pairwise Distances
+            const keyIndices = [0, 7, 8, 11, 12, 13, 14, 23, 24];
+
+            // 1. Draw the AI "Vision Web" (The 36 pairwise distances)
+            ctx.globalAlpha = 0.15;
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 1.5;
+            for (let i = 0; i < keyIndices.length; i++) {
+                for (let j = i + 1; j < keyIndices.length; j++) {
+                    const a = landmarks[keyIndices[i]];
+                    const b = landmarks[keyIndices[j]];
+                    if (!a || !b || (a.visibility ?? 1) < 0.3 || (b.visibility ?? 1) < 0.3) continue;
+                    ctx.beginPath();
+                    ctx.moveTo(W - a.x * W, a.y * H);
+                    ctx.lineTo(W - b.x * W, b.y * H);
+                    ctx.stroke();
+                }
+            }
+            ctx.globalAlpha = 1.0;
+
+            // 2. Draw normal MediaPipe connections (faded outline)
+            ctx.strokeStyle = 'white';
+            ctx.lineWidth = 2;
+            ctx.globalAlpha = 0.2;
             MP_CONNECTIONS.forEach(([i, j]) => {
                 const a = landmarks[i];
                 const b = landmarks[j];
-                if (!a || !b) return;
-                if ((a.visibility ?? 1) < 0.3 || (b.visibility ?? 1) < 0.3) return;
+                if (!a || !b || (a.visibility ?? 1) < 0.3 || (b.visibility ?? 1) < 0.3) return;
                 ctx.beginPath();
                 ctx.moveTo(W - a.x * W, a.y * H);
                 ctx.lineTo(W - b.x * W, b.y * H);
-                ctx.strokeStyle = color;
-                ctx.lineWidth = 3;
                 ctx.stroke();
             });
+            ctx.globalAlpha = 1.0;
 
-            // Draw landmarks
-            landmarks.forEach(lm => {
+            // 3. Draw landmarks (highlight the 9 key ones, fade the 24 discarded ones)
+            landmarks.forEach((lm, index) => {
                 if ((lm.visibility ?? 1) < 0.3) return;
+                const isKeyPoint = keyIndices.includes(index);
+
                 ctx.beginPath();
-                ctx.arc(W - lm.x * W, lm.y * H, 4, 0, 2 * Math.PI);
-                ctx.fillStyle = color;
+                ctx.arc(W - lm.x * W, lm.y * H, isKeyPoint ? 5 : 2, 0, 2 * Math.PI);
+                ctx.fillStyle = isKeyPoint ? color : 'rgba(255, 255, 255, 0.3)';
                 ctx.fill();
-                ctx.strokeStyle = '#000';
-                ctx.lineWidth = 1;
-                ctx.stroke();
+
+                if (isKeyPoint) {
+                    ctx.strokeStyle = '#000';
+                    ctx.lineWidth = 1;
+                    ctx.stroke();
+                }
             });
         }
 
