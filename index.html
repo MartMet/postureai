@@ -1114,7 +1114,14 @@
             }
 
             state.lastFrameTime = Date.now();
-            state.detectTimer = requestAnimationFrame(detectLoop);
+
+            // Critical Fix: Do not queue a rAF callback if the browser is hidden.
+            // When hidden, rAF completely pauses. If we queue them via the watchdog, thousands
+            // of callbacks will pile up and execute instantly when the tab is restored, freezing the app.
+            if (!document.hidden) {
+                cancelAnimationFrame(state.detectTimer);
+                state.detectTimer = requestAnimationFrame(detectLoop);
+            }
         }
 
         // MediaPipe Pose connections (33 landmarks)
@@ -2031,7 +2038,7 @@
         // --- Background execution & watchdog ---
         // Browsers throttle requestAnimationFrame when the tab is hidden, occluded, or blurred.
         // This watchdog checks every second: if rAF hasn't fired in 1.5s, it forces a frame.
-        // This guarantees the AI keeps analyzing posture and writing history even in the background.
+        // This avoids overlapping execution by relying on the cancelAnimationFrame inside detectLoop.
         setInterval(() => {
             if (Date.now() - state.lastFrameTime > 1500) {
                 // The rAF loop stalled. Force a tick to keep background inference alive.
@@ -2040,6 +2047,16 @@
                 }
             }
         }, 1000);
+
+        // --- Fast Wake-up ---
+        // When the user brings the tab back into focus, instantly restart the high-speed rAF loop
+        // instead of waiting for the 1-second watchdog to notice.
+        document.addEventListener('visibilitychange', () => {
+            if (!document.hidden && state.detector && state.video.readyState >= 2) {
+                detectLoop();
+                updateCharts();
+            }
+        });
     </script>
 </body>
 
