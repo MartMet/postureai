@@ -14,7 +14,9 @@ PostureAI uses your webcam + [MediaPipe Pose](https://ai.google.dev/edge/mediapi
 - **Custom labels** — train on any posture categories you want (good, bad, slouched, leaning-left, …)
 - **Per-label colours** — each label gets a unique colour used consistently across the UI, heatmap, and skeleton overlay
 - **Auto-save / auto-load** — model and data persist across reloads automatically
-- **Daily activity heatmap** — 24 × 60 minute grid showing dominant posture per minute throughout the day
+- **Continuous Learning** — instantly correct the model by capturing samples during live prediction to auto-retrain in the background
+- **Live Probability HUD** — displays a dynamically sorted ranking of all custom label probabilities in real-time
+- **Continuous Probability Heatmap** — 24 × 60 minute grid that mathematically blends your label colors across RGB channels based on exact prediction confidence
 - **Health rings & score** — visual rings for upright time, consistency streak, and break frequency
 - **Bad posture alert** — configurable timer alert (5 s–300 s) with escalating audio beeps; repeats until you sit up
 - **Home Assistant webhook** — send posture state to HA on every change; no token required
@@ -30,13 +32,14 @@ PostureAI uses your webcam + [MediaPipe Pose](https://ai.google.dev/edge/mediapi
 2. Go to the **Collection** tab — add label names (defaults: `good`, `bad`)
 3. Hold each posture and click its capture button to collect samples (aim for 30+ per label)
 4. Switch to the **Training** tab and click **Start Training**
-5. The model saves automatically — it's ready next time you open the app
+5. **Continuous Learning:** Once predicting, if the AI makes a mistake, simply click the correct label's capture button — the model will instantly learn and auto-retrain in the background!
+6. The model saves automatically — it's ready next time you open the app
 
 ---
 
 ## 🔔 Bad Posture Alert
 
-Found in the **Stats** tab. Enable the checkbox and set a threshold (e.g. 30 s). Once you've been in non-good posture for that long, a beep fires. Each successive repeat escalates in pitch and number of pulses until good posture is resumed.
+Found in the **Settings/Connectivity** area. Enable the checkbox and set a threshold (e.g. 30 s). Once your probability for good posture drops for that long, a beep fires. Each successive repeat escalates in pitch and number of pulses until good posture is resumed.
 
 ---
 
